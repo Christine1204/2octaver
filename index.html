@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MIDI Trainer</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="workspace">
+      <!-- Left Control Drawer -->
+      <aside id="sidebar">
+        <header class="sidebar-header">
+          <h2>MIDI Trainer</h2>
+          <div id="device-info">No MIDI keyboard connected</div>
+        </header>
+
+        <section class="sidebar-group">
+          <label class="btn file-btn">
+            Load MIDI
+            <input type="file" id="midi-upload" accept=".mid,.midi" />
+          </label>
+
+          <label class="btn file-btn audio-file-btn">
+            Load Audio (MP3/WAV)
+            <input type="file" id="audio-upload" accept="audio/*" />
+          </label>
+          <div id="audio-status" class="status-hint">No backing track loaded</div>
+        </section>
+
+        <!-- Audio Mixing & Calibration -->
+        <section class="sidebar-group audio-controls-group">
+          <div class="control-row">
+            <label for="audio-volume">Audio Vol</label>
+            <input type="range" id="audio-volume" min="0" max="1" step="0.05" value="0.8" />
+          </div>
+          <div class="control-row">
+            <label for="sync-offset">Sync Delay: <span id="offset-label">0ms</span></label>
+            <input type="range" id="sync-offset" min="-200" max="200" step="5" value="0" />
+          </div>
+        </section>
+
+        <!-- Transport & Speed Controls -->
+        <section class="sidebar-group transport-controls">
+          <div class="btn-row">
+            <button id="play-btn" disabled>Play</button>
+            <button id="stop-btn" disabled>Stop</button>
+          </div>
+
+          <div class="speed-control-box">
+            <div class="speed-header">
+              <span>Playback Speed</span>
+              <span id="speed-label">1.00×</span>
+            </div>
+            <input type="range" id="speed-slider" min="0.3" max="1.2" step="0.05" value="1.0" />
+            <div class="speed-presets">
+              <button type="button" class="preset-btn" data-speed="0.5">0.5×</button>
+              <button type="button" class="preset-btn" data-speed="0.75">0.75×</button>
+              <button type="button" class="preset-btn" data-speed="0.9">0.9×</button>
+              <button type="button" class="preset-btn active" data-speed="1.0">1.0×</button>
+            </div>
+          </div>
+
+          <div class="transpose-box">
+            <div class="transpose-actions">
+              <button id="oct-down-btn">-8va</button>
+              <span id="transpose-label">+0 st</span>
+              <button id="oct-up-btn">+8va</button>
+            </div>
+            <button id="auto-fit-btn" class="secondary-btn" disabled>Auto Fit</button>
+          </div>
+
+          <!-- Single Octave Folding Toggle -->
+          <label class="toggle-box">
+            <input type="checkbox" id="fold-toggle" checked />
+            <span>Fold all notes to 2 octaves</span>
+          </label>
+        </section>
+
+        <!-- Multi-Track Checklist -->
+        <section class="sidebar-group tracks-section">
+          <h3>Tracks</h3>
+          <div id="track-list" class="track-list">
+            <p class="empty-hint">Load a MIDI file to select tracks.</p>
+          </div>
+        </section>
+      </aside>
+
+      <!-- Main Visual Viewport -->
+      <main id="viewport">
+        <div class="timeline-container">
+          <canvas id="timeline-canvas"></canvas>
+          <div id="timeline-playhead"></div>
+        </div>
+
+        <div class="canvas-stage">
+          <canvas id="note-canvas"></canvas>
+        </div>
+
+        <div id="keyboard-view"></div>
+      </main>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
