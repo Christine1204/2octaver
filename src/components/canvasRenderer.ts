@@ -74,13 +74,13 @@ export class NoteRenderer {
         const rightInactiveX = leftInactiveWidth + activeWidth;
         const rightInactiveWidth = rect.width - rightInactiveX;
 
-        // 1. Inactive Margin Backdrops
-        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+        // 1. Shaded Out-Of-Bounds Margins
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
         this.ctx.fillRect(0, 0, leftInactiveWidth, rect.height);
         this.ctx.fillRect(rightInactiveX, 0, rightInactiveWidth, rect.height);
 
-        // Active Playable Boundary Dividers
-        this.ctx.strokeStyle = 'rgba(56, 189, 248, 0.25)';
+        // Playable Zone Boundary Markers
+        this.ctx.strokeStyle = 'rgba(56, 189, 248, 0.18)';
         this.ctx.lineWidth = 1;
         this.ctx.beginPath();
         this.ctx.moveTo(leftInactiveWidth, 0);
@@ -91,13 +91,12 @@ export class NoteRenderer {
 
         const visibleTimeWindow = rect.height / this.pixelsPerSecond;
 
-        // 2. Render Vertical Audio Waveform (Anchored in the right inactive octave)
+        // 2. Vertical Waveform Monitor
         if (waveform && waveform.peaks.length > 0) {
             const centerX = rightInactiveX + rightInactiveWidth / 2;
             const maxHalfWidth = (rightInactiveWidth / 2) * 0.85;
 
-            // Subtle center spine
-            this.ctx.strokeStyle = 'rgba(148, 163, 184, 0.12)';
+            this.ctx.strokeStyle = 'rgba(148, 163, 184, 0.1)';
             this.ctx.lineWidth = 1;
             this.ctx.beginPath();
             this.ctx.moveTo(centerX, 0);
@@ -112,7 +111,6 @@ export class NoteRenderer {
             const rightPath: { x: number; y: number }[] = [];
 
             for (let t = timeStart; t <= timeEnd; t += stepTime) {
-                // Apply calibration offset so waveform shifts with audio delay
                 const audioTime = t - syncOffsetSeconds;
                 const peakIndex = Math.floor(audioTime * waveform.peaksPerSecond);
 
@@ -128,46 +126,41 @@ export class NoteRenderer {
                 rightPath.push({ x: centerX + halfW, y });
             }
 
-            // Draw mirrored polygon
             if (leftPath.length > 1) {
-                this.ctx.fillStyle = 'rgba(148, 163, 184, 0.18)';
-                this.ctx.strokeStyle = 'rgba(148, 163, 184, 0.35)';
+                this.ctx.fillStyle = 'rgba(148, 163, 184, 0.14)';
+                this.ctx.strokeStyle = 'rgba(148, 163, 184, 0.3)';
                 this.ctx.lineWidth = 1;
 
                 this.ctx.beginPath();
                 this.ctx.moveTo(leftPath[0].x, leftPath[0].y);
-                for (let i = 1; i < leftPath.length; i++) {
-                    this.ctx.lineTo(leftPath[i].x, leftPath[i].y);
-                }
-                for (let i = rightPath.length - 1; i >= 0; i--) {
-                    this.ctx.lineTo(rightPath[i].x, rightPath[i].y);
-                }
+                for (let i = 1; i < leftPath.length; i++) this.ctx.lineTo(leftPath[i].x, leftPath[i].y);
+                for (let i = rightPath.length - 1; i >= 0; i--) this.ctx.lineTo(rightPath[i].x, rightPath[i].y);
                 this.ctx.closePath();
                 this.ctx.fill();
                 this.ctx.stroke();
             }
         }
 
-        // 3. Render Conductor Bar Lines
+        // 3. Conductor Bar Lines
         for (const bar of barLines) {
             const timeUntilHit = bar.time - currentTime;
             if (timeUntilHit < -0.1 || timeUntilHit > visibleTimeWindow) continue;
 
             const y = hitLineY - timeUntilHit * this.pixelsPerSecond;
 
-            this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-            this.ctx.lineWidth = 1.5;
+            this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+            this.ctx.lineWidth = 1;
             this.ctx.beginPath();
             this.ctx.moveTo(0, y);
             this.ctx.lineTo(rect.width, y);
             this.ctx.stroke();
 
             this.ctx.font = '10px monospace';
-            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
             this.ctx.fillText(`m.${bar.measureNumber} (${bar.timeSignature})`, 8, y - 4);
         }
 
-        // 4. Render Falling Notes
+        // 4. Polished Falling Notes (With Inset Gloss and Rounded Edges)
         for (const note of notes) {
             const timeUntilHit = note.time - currentTime;
             if (timeUntilHit + note.duration < 0) continue;
@@ -176,17 +169,56 @@ export class NoteRenderer {
             const geom = this.getNoteGeometry(note.midi);
             if (!geom) continue;
 
-            const noteHeight = Math.max(note.duration * this.pixelsPerSecond, 6);
+            const noteHeight = Math.max(note.duration * this.pixelsPerSecond, 8);
             const noteY = hitLineY - timeUntilHit * this.pixelsPerSecond - noteHeight;
+            const x = geom.x + 1.5;
+            const w = geom.width - 3;
 
-            const color = note.color || '#38bdf8';
             const isPlayable = note.midi >= this.playableStart && note.midi <= this.playableEnd;
+            const baseColor = note.color || '#38bdf8';
 
-            this.ctx.fillStyle = isPlayable ? color : 'rgba(100, 116, 139, 0.5)';
-            this.ctx.fillRect(geom.x + 1.5, noteY, geom.width - 3, noteHeight);
+            this.ctx.save();
+            // Draw rounded block
+            this.ctx.beginPath();
+            if ((this.ctx as any).roundRect) {
+                (this.ctx as any).roundRect(x, noteY, w, noteHeight, [4, 4, 2, 2]);
+            } else {
+                this.ctx.rect(x, noteY, w, noteHeight);
+            }
 
-            this.ctx.strokeStyle = isPlayable ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)';
-            this.ctx.strokeRect(geom.x + 1.5, noteY, geom.width - 3, noteHeight);
+            this.ctx.fillStyle = isPlayable ? baseColor : 'rgba(100, 116, 139, 0.4)';
+            this.ctx.fill();
+
+            // Top Specular Highlight (Giving notes tactile depth)
+            if (isPlayable && noteHeight > 10) {
+                this.ctx.fillStyle = 'rgba(255, 255, 255, 0.28)';
+                this.ctx.fillRect(x + 1, noteY + 1, w - 2, 3);
+            }
+
+            // Crisp outer stroke
+            this.ctx.strokeStyle = isPlayable ? 'rgba(0, 0, 0, 0.3)' : 'rgba(0, 0, 0, 0.4)';
+            this.ctx.lineWidth = 1;
+            this.ctx.stroke();
+            this.ctx.restore();
         }
+
+        // 5. Stylized Target Hit Line
+        // Outer dimmed lines
+        this.ctx.strokeStyle = 'rgba(56, 189, 248, 0.2)';
+        this.ctx.lineWidth = 2;
+        this.ctx.beginPath();
+        this.ctx.moveTo(0, hitLineY - 1);
+        this.ctx.lineTo(leftInactiveWidth, hitLineY - 1);
+        this.ctx.moveTo(rightInactiveX, hitLineY - 1);
+        this.ctx.lineTo(rect.width, hitLineY - 1);
+        this.ctx.stroke();
+
+        // Vibrant strike beam across active 2 octaves
+        this.ctx.strokeStyle = '#38bdf8';
+        this.ctx.lineWidth = 2;
+        this.ctx.beginPath();
+        this.ctx.moveTo(leftInactiveWidth, hitLineY - 1);
+        this.ctx.lineTo(rightInactiveX, hitLineY - 1);
+        this.ctx.stroke();
     }
 }

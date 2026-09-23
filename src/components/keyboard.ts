@@ -6,7 +6,7 @@ export class KeyboardVisualizer {
     private playableEnd = 72;     // C5
 
     private userActiveNotes = new Set<number>();
-    private currentTargets = new Map<number, string>(); // note -> color hex
+    private currentTargets = new Map<number, string>();
 
     constructor(containerId: string) {
         const el = document.getElementById(containerId);
@@ -15,7 +15,6 @@ export class KeyboardVisualizer {
         this.render();
     }
 
-    // Physical hardware input
     public setUserNoteState(note: number, isPressed: boolean): void {
         if (isPressed) {
             this.userActiveNotes.add(note);
@@ -29,32 +28,24 @@ export class KeyboardVisualizer {
         }
     }
 
-    // Dynamic song cue input (called every frame from the game loop)
     public setTargetNotes(newTargets: Map<number, string>): void {
-        // 1. Clear keys that are no longer active
         for (const [note] of this.currentTargets) {
             if (!newTargets.has(note)) {
                 const keyEl = this.container.querySelector(`[data-note="${note}"]`) as HTMLElement | null;
                 if (keyEl) {
                     keyEl.classList.remove('target-active');
-                    const pip = keyEl.querySelector('.target-pip') as HTMLElement | null;
-                    if (pip) pip.style.backgroundColor = '';
+                    keyEl.style.removeProperty('--cue-color');
                 }
             }
         }
 
-        // 2. Activate or update newly cued keys
         for (const [note, color] of newTargets) {
             const prevColor = this.currentTargets.get(note);
             if (prevColor !== color) {
                 const keyEl = this.container.querySelector(`[data-note="${note}"]`) as HTMLElement | null;
                 if (keyEl) {
                     keyEl.classList.add('target-active');
-                    const pip = keyEl.querySelector('.target-pip') as HTMLElement | null;
-                    if (pip) {
-                        pip.style.backgroundColor = color;
-                        pip.style.boxShadow = `0 0 10px ${color}`;
-                    }
+                    keyEl.style.setProperty('--cue-color', color);
                 }
             }
         }
@@ -96,12 +87,10 @@ export class KeyboardVisualizer {
                 key.style.width = `${whiteWidthPct}%`;
             }
 
-            // Top indicator pip (The target cue)
             const pip = document.createElement('div');
             pip.className = 'target-pip';
             key.appendChild(pip);
 
-            // Octave label for C keys
             if (note % 12 === 0) {
                 const label = document.createElement('span');
                 label.className = 'key-label';

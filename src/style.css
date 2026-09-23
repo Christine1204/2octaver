@@ -1,11 +1,13 @@
 :root {
-  --bg-primary: #090d16;
-  --bg-sidebar: #0f172a;
-  --bg-surface: #1e293b;
-  --border-color: #334155;
+  --bg-primary: #080c14;
+  --bg-sidebar: #0f1626;
+  --bg-surface: #151f33;
+  --bg-surface-hover: #1c2a45;
+  --border-color: #243452;
+  --border-subtle: #17243c;
   --accent-color: #38bdf8;
-  --text-muted: #94a3b8;
-  --text-main: #f8fafc;
+  --text-muted: #7e8fa6;
+  --text-main: #f1f5f9;
 }
 
 * {
@@ -23,6 +25,21 @@ body, html {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
 }
 
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-sidebar);
+}
+::-webkit-scrollbar-thumb {
+  background: #243452;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3b5073;
+}
+
 #workspace {
 display: flex;
 width: 100%;
@@ -30,27 +47,165 @@ height: 100%;
 }
 
 /* Sidebar */
+/* Sidebar sizing with room for text */
 #sidebar {
-width: 280px;
-min-width: 280px;
+width: 350px;
+min-width: 350px;
 background-color: var(--bg-sidebar);
 border-right: 1px solid var(--border-color);
 display: flex;
 flex-direction: column;
 padding: 16px;
-gap: 16px;
+gap: 12px;
 overflow-y: auto;
 }
 
-.sidebar-header h2 {
-  margin: 0 0 6px 0;
-  font-size: 1.15rem;
-  letter-spacing: -0.5px;
+/* Track List Container */
+.track-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Individual Track Card */
+.track-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.12s ease;
+}
+
+.track-row:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--border-color);
+}
+
+.track-row.active {
+  background: #152238;
+  border-color: rgba(56, 189, 248, 0.4);
+}
+
+/* Status Indicator Dot */
+.track-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1.5px solid #475569;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.track-row.active .track-dot {
+  background: var(--track-color, var(--accent-color));
+  border-color: var(--track-color, var(--accent-color));
+  box-shadow: 0 0 6px var(--track-color);
+}
+
+/* Instrument Icon */
+.track-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+}
+
+.track-row.active .track-icon {
+  color: var(--track-color, var(--accent-color));
+}
+
+/* Multi-line Text Container (No more cutoffs) */
+.track-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
+.track-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  line-height: 1.25;
+  /* Allow up to 2 full lines of text before truncating */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  transition: color 0.15s ease;
+}
+
+.track-row.active .track-title {
+  color: var(--text-main);
+}
+
+.track-subtitle {
+  font-size: 0.68rem;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Ultra-compact Octave Stepper */
+.track-stepper {
+  display: flex;
+  align-items: center;
+  background: #090e18;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  overflow: hidden;
+  flex-shrink: 0;
+  height: 24px;
+}
+
+.stepper-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: bold;
+  height: 100%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stepper-btn:hover {
+  background: #1e293b;
+  color: #fff;
+}
+
+.stepper-val {
+  font-size: 10px;
+  font-family: monospace;
+  font-weight: 700;
+  padding: 0 3px;
+  color: var(--accent-color);
+  min-width: 28px;
+  text-align: center;
+  line-height: 24px;
 }
 
 #device-info {
-font-size: 0.75rem;
+font-size: 0.72rem;
 color: var(--text-muted);
+white-space: nowrap;
+overflow: hidden;
+text-overflow: ellipsis;
 }
 
 .sidebar-group {
@@ -65,327 +220,25 @@ color: var(--text-muted);
   background: var(--bg-surface);
   border: 1px dashed var(--border-color);
   padding: 8px;
-  border-radius: 4px;
+  border-radius: 5px;
   cursor: pointer;
+  font-size: 0.8rem;
+  transition: all 0.15s ease;
+}
+
+.file-btn:hover {
+  border-color: var(--accent-color);
+  background: var(--bg-surface-hover);
 }
 
 .file-btn input {
   display: none;
 }
 
-.btn-row {
-  display: flex;
-  gap: 8px;
-}
-
-button {
-  flex: 1;
-  background: var(--bg-surface);
-  color: var(--text-main);
-  border: 1px solid var(--border-color);
-  padding: 8px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-weight: 500;
-}
-
-button:hover:not(:disabled) {
-  border-color: var(--accent-color);
-}
-
-button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.transpose-box {
-  background: var(--bg-primary);
-  padding: 8px;
-  border-radius: 4px;
-  border: 1px solid var(--border-color);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.transpose-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-#transpose-label {
-font-size: 0.85rem;
-font-weight: bold;
-color: var(--accent-color);
-}
-
-/* Track Multi-Select List */
-.tracks-section h3 {
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  margin: 0;
-}
-
-.track-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.track-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--bg-surface);
-  padding: 8px 10px;
-  border-radius: 4px;
-  cursor: pointer;
-  border-left: 4px solid transparent;
-}
-
-.track-item input[type="checkbox"] {
-  cursor: pointer;
-}
-
-.track-meta {
-  flex: 1;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  font-size: 0.8rem;
-}
-
-/* Viewport Area */
-#viewport {
-flex: 1;
-display: flex;
-flex-direction: column;
-height: 100%;
-position: relative;
-background-color: var(--bg-primary);
-}
-
-/* DAW Minimap */
-.timeline-container {
-  height: 48px;
-  background: #020617;
-  border-bottom: 1px solid var(--border-color);
-  position: relative;
-  cursor: pointer;
-  width: 100%;
-}
-
-#timeline-canvas {
-width: 100%;
-height: 100%;
-display: block;
-}
-
-#timeline-playhead {
-position: absolute;
-top: 0;
-left: 0;
-width: 2px;
-height: 100%;
-background: #ef4444;
-pointer-events: none;
-box-shadow: 0 0 6px #ef4444;
-}
-
-/* Canvas Area */
-.canvas-stage {
-  flex: 1;
-  position: relative;
-  width: 100%;
-  overflow: hidden;
-}
-
-#note-canvas {
-width: 100%;
-height: 100%;
-display: block;
-}
-
-/* 4-Octave Piano Keyboard */
-/* 4-Octave Piano Keyboard */
-#keyboard-view {
-height: 130px;
-background: #020617;
-border-top: 2px solid rgba(56, 189, 248, 0.4);
-position: relative;
-width: 100%;
-}
-
-.piano-wrapper {
-  position: relative;
-  display: flex;
-  width: 100%;
-  height: 100%;
-  user-select: none;
-}
-
-.key {
-  position: relative;
-  box-sizing: border-box;
-  border-radius: 0 0 4px 4px;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  align-items: center;
-  padding-bottom: 6px;
-  transition: background-color 0.04s ease;
-}
-
-/* Cue LED Pip at top of key */
-.target-pip {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 10px;
-  background: transparent;
-  pointer-events: none;
-  border-radius: 2px 2px 0 0;
-  transition: background-color 0.05s ease, box-shadow 0.05s ease;
-}
-
-.key.white {
-  height: 100%;
-  background: #e2e8f0;
-  border: 1px solid #090d16;
-  z-index: 1;
-}
-
-.key.white.dimmed {
-  background: #1e293b;
-  border-color: #0f172a;
-}
-
-.key.black {
-  height: 60%;
-  background: #0f172a;
-  z-index: 2;
-  border: 1px solid #000;
-  margin-left: calc(-1 * var(--black-width) / 2);
-  margin-right: calc(-1 * var(--black-width) / 2);
-}
-
-.key.black.dimmed {
-  background: #050811;
-  border-color: #1e293b;
-}
-
-.key-label {
-  font-size: 10px;
-  font-weight: 700;
-  color: #64748b;
-  pointer-events: none;
-}
-
-/* 1. SONG TARGET ACTIVE: Cue to play */
-.key.target-active {
-  border-top: 2px solid #ffffff;
-}
-
-.key.white.target-active {
-  background: #f1f5f9;
-  box-shadow: inset 0 8px 12px rgba(56, 189, 248, 0.25);
-}
-
-.key.black.target-active {
-  background: #1e293b;
-  box-shadow: inset 0 6px 10px rgba(56, 189, 248, 0.3);
-}
-
-/* 2. USER ACTIVE: Key physically depressed */
-.key.user-active {
-  background: #38bdf8 !important;
-  box-shadow: inset 0 -4px 8px rgba(0, 0, 0, 0.4);
-}
-
-.key.user-active .key-label {
-  color: #020617;
-}
-
-/* 3. HIT SUCCESS: User hits key while target cue is active */
-.key.user-active.target-active {
-  background: #22c55e !important; /* Emerald hit */
-  box-shadow: 0 0 16px rgba(74, 222, 128, 0.8), inset 0 0 8px #ffffff !important;
-}
-
-.key.user-active.target-active .target-pip {
-  background-color: #ffffff !important;
-  box-shadow: 0 0 12px #ffffff !important;
-}
-/* Sidebar Track Item with Individual Octave Buttons */
-.track-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--bg-surface);
-  padding: 8px 10px;
-  border-radius: 4px;
-  border-left: 4px solid transparent;
-}
-
-.track-shift-controls {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.track-shift-btn {
-  background: #090d16;
-  border: 1px solid var(--border-color);
-  color: var(--text-main);
-  padding: 2px 5px;
-  font-size: 10px;
-  border-radius: 3px;
-  cursor: pointer;
-  line-height: 1;
-}
-
-.track-shift-btn:hover {
-  border-color: var(--accent-color);
-}
-
-.track-shift-label {
-  font-size: 11px;
-  font-weight: bold;
-  min-width: 38px;
-  text-align: center;
-  color: var(--accent-color);
-}
-.toggle-box {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  cursor: pointer;
-  background: var(--bg-surface);
-  padding: 8px 10px;
-  border-radius: 4px;
-  border: 1px solid var(--border-color);
-  user-select: none;
-}
-
-.toggle-box:hover {
-  color: var(--text-main);
-  border-color: var(--accent-color);
-}
-
-.toggle-box input[type="checkbox"] {
-  cursor: pointer;
-  accent-color: var(--accent-color);
-}
 .audio-file-btn {
   border-style: solid;
-  border-color: #3b82f6;
-  color: #60a5fa;
+  border-color: #2563eb;
+  color: #93c5fd;
   margin-top: 4px;
 }
 
@@ -398,7 +251,7 @@ width: 100%;
 .audio-controls-group {
   background: var(--bg-primary);
   padding: 8px 10px;
-  border-radius: 4px;
+  border-radius: 6px;
   border: 1px solid var(--border-color);
 }
 
@@ -416,10 +269,37 @@ width: 100%;
   accent-color: var(--accent-color);
   cursor: pointer;
 }
+
+.btn-row {
+  display: flex;
+  gap: 8px;
+}
+
+button {
+  background: var(--bg-surface);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+  padding: 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.15s ease;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent-color);
+  background: var(--bg-surface-hover);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .speed-control-box {
   background: var(--bg-primary);
   padding: 8px 10px;
-  border-radius: 4px;
+  border-radius: 6px;
   border: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
@@ -453,17 +333,9 @@ cursor: pointer;
 
 .preset-btn {
   flex: 1;
-  padding: 3px 0;
+  padding: 4px 0;
   font-size: 0.7rem;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
-  color: var(--text-muted);
-}
-
-.preset-btn:hover {
-  border-color: var(--accent-color);
-  color: var(--text-main);
+  border-radius: 4px;
 }
 
 .preset-btn.active {
@@ -471,4 +343,361 @@ cursor: pointer;
   border-color: var(--accent-color);
   color: var(--accent-color);
   font-weight: bold;
+}
+
+.transpose-box {
+  background: var(--bg-primary);
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.transpose-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#transpose-label {
+font-size: 0.85rem;
+font-weight: bold;
+color: var(--accent-color);
+}
+
+.toggle-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  background: var(--bg-surface);
+  padding: 8px 10px;
+  border-radius: 5px;
+  border: 1px solid var(--border-color);
+  user-select: none;
+}
+
+.toggle-box:hover {
+  color: var(--text-main);
+  border-color: var(--accent-color);
+}
+
+/* ==========================================================================
+ *  Songsterr-Style Track Selector
+ *  ========================================================================== */
+.tracks-section h3 {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin: 4px 0 0 0;
+}
+
+.track-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.track-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.12s ease;
+}
+
+.track-row:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--border-color);
+}
+
+/* Active Track State */
+.track-row.active {
+  background: #152238;
+  border-color: rgba(56, 189, 248, 0.4);
+}
+
+/* Status Indicator Dot */
+.track-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1.5px solid #475569;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.track-row.active .track-dot {
+  background: var(--track-color, var(--accent-color));
+  border-color: var(--track-color, var(--accent-color));
+  box-shadow: 0 0 6px var(--track-color);
+}
+
+/* Instrument Icon */
+.track-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+}
+
+.track-row.active .track-icon {
+  color: var(--track-color, var(--accent-color));
+}
+
+/* Text Container */
+.track-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.track-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.15s ease;
+}
+
+.track-row.active .track-title {
+  color: var(--text-main);
+}
+
+.track-subtitle {
+  font-size: 0.68rem;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+
+/* Stepper Badge */
+.track-stepper {
+  display: flex;
+  align-items: center;
+  background: #090e18;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.stepper-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.stepper-btn:hover {
+  background: #1e293b;
+  color: #fff;
+}
+
+.stepper-val {
+  font-size: 10px;
+  font-family: monospace;
+  font-weight: 700;
+  padding: 0 4px;
+  color: var(--accent-color);
+  min-width: 32px;
+  text-align: center;
+}
+
+/* ==========================================================================
+ *  Viewport & Tactile Piano Keyboard
+ *  ========================================================================== */
+#viewport {
+flex: 1;
+display: flex;
+flex-direction: column;
+height: 100%;
+position: relative;
+background-color: var(--bg-primary);
+}
+
+.timeline-container {
+  height: 48px;
+  background: #04060b;
+  border-bottom: 1px solid var(--border-color);
+  position: relative;
+  cursor: pointer;
+  width: 100%;
+}
+
+#timeline-canvas {
+width: 100%;
+height: 100%;
+display: block;
+}
+
+#timeline-playhead {
+position: absolute;
+top: 0;
+left: 0;
+width: 2px;
+height: 100%;
+background: #ef4444;
+pointer-events: none;
+box-shadow: 0 0 6px #ef4444;
+}
+
+.canvas-stage {
+  flex: 1;
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+}
+
+#note-canvas {
+width: 100%;
+height: 100%;
+display: block;
+}
+
+#keyboard-view {
+height: 135px;
+background: #070b14;
+position: relative;
+width: 100%;
+}
+
+.piano-wrapper {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+}
+
+.key {
+  position: relative;
+  box-sizing: border-box;
+  border-radius: 0 0 4px 4px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  padding-bottom: 6px;
+  transition: transform 0.04s ease, background 0.05s ease;
+}
+
+.key.white {
+  height: 100%;
+  background: linear-gradient(to bottom, #dbe4ef 0%, #cbd5e1 85%, #94a3b8 100%);
+  border: 1px solid #0f172a;
+  border-top: none;
+  z-index: 1;
+  box-shadow: inset 0 -2px 3px rgba(0, 0, 0, 0.25);
+}
+
+.key.white.dimmed {
+  background: linear-gradient(to bottom, #1e293b 0%, #151f30 100%);
+  border-color: #0c1220;
+}
+
+.key.black {
+  height: 62%;
+  background: linear-gradient(to bottom, #1e2638 0%, #0a0e1a 90%);
+  z-index: 3;
+  border: 1px solid #000;
+  border-top: none;
+  border-radius: 0 0 3px 3px;
+  margin-left: calc(-1 * var(--black-width) / 2);
+  margin-right: calc(-1 * var(--black-width) / 2);
+  box-shadow: 2px 4px 6px rgba(0, 0, 0, 0.6), inset 0 -3px 2px rgba(255, 255, 255, 0.1);
+}
+
+.key.black.dimmed {
+  background: #060911;
+  border-color: #141b2b;
+  box-shadow: none;
+}
+
+.key-label {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  color: #64748b;
+  pointer-events: none;
+}
+
+.target-pip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: transparent;
+  pointer-events: none;
+}
+
+.key.target-active .target-pip {
+  background: var(--cue-color, #38bdf8);
+}
+
+.key.white.target-active {
+  background: linear-gradient(to bottom, #f1f5f9 0%, #e2e8f0 100%);
+}
+
+.key.black.target-active {
+  background: linear-gradient(to bottom, #2b374e 0%, #131b2e 100%);
+}
+
+.key.user-active {
+  transform: translateY(2px);
+}
+
+.key.white.user-active {
+  background: linear-gradient(to bottom, #7dd3fc 0%, #38bdf8 100%) !important;
+  box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.35) !important;
+}
+
+.key.black.user-active {
+  background: linear-gradient(to bottom, #0284c7 0%, #0369a1 100%) !important;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5) !important;
+}
+
+.key.user-active .key-label {
+  color: #032042;
+}
+
+.key.user-active.target-active {
+  transform: translateY(3px);
+}
+
+.key.white.user-active.target-active {
+  background: linear-gradient(to bottom, #86efac 0%, #22c55e 100%) !important;
+  box-shadow: inset 0 4px 8px rgba(0, 0, 0, 0.3) !important;
+}
+
+.key.black.user-active.target-active {
+  background: linear-gradient(to bottom, #16a34a 0%, #15803d 100%) !important;
+}
+
+.key.user-active.target-active .target-pip {
+  background: #ffffff !important;
+  height: 5px;
 }

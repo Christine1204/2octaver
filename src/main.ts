@@ -7,6 +7,7 @@ import { TimelineMinimap } from './components/timeline';
 import { generateBarLines, type BarLine } from './midi/conductor';
 import { BackingTrackPlayer } from './audio/backingTrack';
 import { extractWaveformData, type WaveformData } from './audio/waveform';
+import { getInstrumentIcon } from './components/icons';
 import type { ParsedSong } from './midi/types';
 
 const TRACK_PALETTE = ['#38bdf8', '#a855f7', '#f97316', '#22c55e', '#f43f5e', '#eab308'];
@@ -29,7 +30,6 @@ const autoFitBtn = document.getElementById('auto-fit-btn') as HTMLButtonElement;
 const transposeLabel = document.getElementById('transpose-label') as HTMLSpanElement;
 const foldToggle = document.getElementById('fold-toggle') as HTMLInputElement;
 
-// Speed Controls
 const speedSlider = document.getElementById('speed-slider') as HTMLInputElement;
 const speedLabel = document.getElementById('speed-label') as HTMLSpanElement;
 const presetButtons = document.querySelectorAll<HTMLButtonElement>('.preset-btn');
@@ -53,7 +53,6 @@ let globalTranspose = 0;
 let foldTo2Octaves = true;
 let combinedNotes: NoteWithMeta[] = [];
 
-// Delta-Time Transport State
 let isPlaying = false;
 let playbackSpeed = 1.0;
 let currentTransportTime = 0;
@@ -113,14 +112,13 @@ function rebuildCombinedNotes(): void {
   }
 }
 
-// 4. Hit Line Target Detection (Song Cues)
+// 4. Hit Line Target Cues
 function updateTargetCues(time: number): void {
   const activeTargets = new Map<number, string>();
+  const leadIn = 0.03;
 
-  // Tolerance window: note is crossing the bottom hit line
-  const leadIn = 0.03; // 30ms early visual cue
   for (const note of combinedNotes) {
-    if (note.time > time + leadIn) break; // Sorted by start time
+    if (note.time > time + leadIn) break;
     if (time >= note.time - leadIn && time <= note.time + note.duration) {
       activeTargets.set(note.midi, note.color || '#38bdf8');
     }
@@ -149,8 +147,7 @@ speedSlider.addEventListener('input', () => {
 
 presetButtons.forEach((btn) => {
   btn.addEventListener('click', () => {
-    const target = parseFloat(btn.dataset.speed || '1.0');
-    setPlaybackSpeed(target);
+    setPlaybackSpeed(parseFloat(btn.dataset.speed || '1.0'));
   });
 });
 
@@ -179,14 +176,14 @@ currentSong.tracks.forEach((track) => {
   const label = document.getElementById(`track-shift-${track.id}`);
   if (label) {
     const sign = track.defaultOctaveShift > 0 ? '+' : '';
-    label.innerText = `${sign}${track.defaultOctaveShift} st`;
+    label.innerText = `${sign}${track.defaultOctaveShift}`;
   }
 });
 
 rebuildCombinedNotes();
 });
 
-// 7. Backing Track & Waveform Loader
+// 7. Backing Track Handlers
 audioInput.addEventListener('change', async (e) => {
   const file = (e.target as HTMLInputElement).files?.[0];
   if (!file) return;
@@ -197,7 +194,6 @@ audioInput.addEventListener('change', async (e) => {
 try {
   await backingTrack.loadFile(file);
   backingTrack.setPlaybackRate(playbackSpeed);
-
   currentWaveform = await extractWaveformData(file, 100);
 
   audioStatus.innerText = `Ready: ${file.name.slice(0, 18)}...`;
@@ -228,7 +224,7 @@ syncOffset.addEventListener('input', () => {
   }
 });
 
-// 8. Scrubbing & Master Transport
+// 8. Transport & Scrubbing
 minimap.onSeek((targetTime) => {
   currentTransportTime = targetTime;
   backingTrack.seek(targetTime);
@@ -296,7 +292,33 @@ function stopPlayback() {
 playBtn.addEventListener('click', () => (isPlaying ? pausePlayback() : startPlayback()));
 stopBtn.addEventListener('click', stopPlayback);
 
-// 9. MIDI File Upload
+// Helper to format track titles and subtitles cleanly like Songsterr
+function formatTrackInfo(rawName: string, noteCount: number, isDrum: boolean) {
+  // Collapse duplicate whitespace and trim
+  const cleanName = rawName.replace(/\s+/g, ' ').trim();
+  let title = cleanName;
+  let subtitle = `${noteCount} notes`;
+
+  if (cleanName.includes('|')) {
+    const parts = cleanName.split('|').map((s) => s.trim());
+    if (parts.length >= 3) {
+      title = parts[2]; // e.g. "Lead Guitar"
+      subtitle = `${parts[0]} • ${parts[1]} • ${noteCount} notes`;
+    } else if (parts.length === 2) {
+      title = parts[1];
+      subtitle = `${parts[0]} • ${noteCount} notes`;
+    }
+  } else if (cleanName.includes(' - ')) {
+    const parts = cleanName.split(' - ').map((s) => s.trim());
+    title = parts[1];
+    subtitle = `${parts[0]} • ${noteCount} notes`;
+  }
+
+  if (isDrum) subtitle += ' (Drums)';
+  return { title, subtitle };
+}
+
+// 9. MIDI File Upload & Songsterr-Style Track List
 fileInput.addEventListener('change', async (event) => {
   const file = (event.target as HTMLInputElement).files?.[0];
   if (!file) return;
@@ -324,54 +346,86 @@ fileInput.addEventListener('change', async (event) => {
 currentSong.tracks.forEach((track) => {
   trackOctaveShifts.set(track.id, track.defaultOctaveShift);
 
-  const item = document.createElement('div');
-  item.className = 'track-item';
   const color = TRACK_PALETTE[track.id % TRACK_PALETTE.length];
-  item.style.borderLeftColor = color;
+  const row = document.createElement('div');
+  row.className = 'track-row';
+  row.style.setProperty('--track-color', color);
 
-  const checkbox = document.createElement('input');
-  checkbox.type = 'checkbox';
-  checkbox.value = track.id.toString();
-
-  if (selectedTrackIds.size === 0 && !track.isDrum) {
-    checkbox.checked = true;
+  const isDefault = selectedTrackIds.size === 0 && !track.isDrum;
+  if (isDefault) {
     selectedTrackIds.add(track.id);
+    row.classList.add('active');
   }
 
-  checkbox.addEventListener('change', () => {
-    if (checkbox.checked) selectedTrackIds.add(track.id);
-    else selectedTrackIds.delete(track.id);
+  // Status Dot
+  const dot = document.createElement('div');
+  dot.className = 'track-dot';
+
+  // Icon
+  const icon = document.createElement('div');
+  icon.className = 'track-icon';
+  icon.innerHTML = getInstrumentIcon(track.name, track.isDrum, track.instrumentNumber);
+
+  // Text (Title & Subtitle)
+  const { title, subtitle } = formatTrackInfo(track.name, track.notes.length, track.isDrum);
+  const textContainer = document.createElement('div');
+  textContainer.className = 'track-text';
+
+  const titleEl = document.createElement('span');
+  titleEl.className = 'track-title';
+  titleEl.innerText = title;
+  titleEl.title = track.name;
+
+  const subEl = document.createElement('span');
+  subEl.className = 'track-subtitle';
+  subEl.innerText = subtitle;
+
+  textContainer.appendChild(titleEl);
+  textContainer.appendChild(subEl);
+
+  // Clicking anywhere on the row toggles selection
+  row.addEventListener('click', () => {
+    const isActive = selectedTrackIds.has(track.id);
+    if (isActive) {
+      selectedTrackIds.delete(track.id);
+      row.classList.remove('active');
+    } else {
+      selectedTrackIds.add(track.id);
+      row.classList.add('active');
+    }
     rebuildCombinedNotes();
   });
 
-  const meta = document.createElement('div');
-  meta.className = 'track-meta';
-  meta.innerHTML = `<strong>${track.name}</strong><br><small>${track.notes.length} notes</small>`;
+  row.appendChild(dot);
+  row.appendChild(icon);
+  row.appendChild(textContainer);
 
-  const shiftBox = document.createElement('div');
-  shiftBox.className = 'track-shift-controls';
+  // Compact Octave Stepper on the right
+  if (!track.isDrum) {
+    const stepper = document.createElement('div');
+    stepper.className = 'track-stepper';
 
-  const downBtn = document.createElement('button');
-  downBtn.className = 'track-shift-btn';
-  downBtn.innerText = '-8va';
+    const downBtn = document.createElement('button');
+    downBtn.className = 'stepper-btn';
+    downBtn.innerText = '-';
 
-  const shiftVal = track.defaultOctaveShift;
-  const sign = shiftVal > 0 ? '+' : '';
-  const shiftLabel = document.createElement('span');
-  shiftLabel.id = `track-shift-${track.id}`;
-  shiftLabel.className = 'track-shift-label';
-  shiftLabel.innerText = `${sign}${shiftVal} st`;
+    const shiftVal = track.defaultOctaveShift;
+    const sign = shiftVal > 0 ? '+' : '';
+    const shiftLabel = document.createElement('span');
+    shiftLabel.id = `track-shift-${track.id}`;
+    shiftLabel.className = 'stepper-val';
+    shiftLabel.innerText = `${sign}${shiftVal}`;
 
-  const upBtn = document.createElement('button');
-  upBtn.className = 'track-shift-btn';
-  upBtn.innerText = '+8va';
+    const upBtn = document.createElement('button');
+    upBtn.className = 'stepper-btn';
+    upBtn.innerText = '+';
 
 downBtn.addEventListener('click', (e) => {
   e.stopPropagation();
   const current = trackOctaveShifts.get(track.id) ?? 0;
   const next = current - 12;
   trackOctaveShifts.set(track.id, next);
-  shiftLabel.innerText = `${next > 0 ? '+' : ''}${next} st`;
+  shiftLabel.innerText = `${next > 0 ? '+' : ''}${next}`;
   rebuildCombinedNotes();
 });
 
@@ -380,18 +434,17 @@ upBtn.addEventListener('click', (e) => {
   const current = trackOctaveShifts.get(track.id) ?? 0;
   const next = current + 12;
   trackOctaveShifts.set(track.id, next);
-  shiftLabel.innerText = `${next > 0 ? '+' : ''}${next} st`;
+  shiftLabel.innerText = `${next > 0 ? '+' : ''}${next}`;
   rebuildCombinedNotes();
 });
 
-shiftBox.appendChild(downBtn);
-shiftBox.appendChild(shiftLabel);
-shiftBox.appendChild(upBtn);
+stepper.appendChild(downBtn);
+stepper.appendChild(shiftLabel);
+stepper.appendChild(upBtn);
+row.appendChild(stepper);
+  }
 
-item.appendChild(checkbox);
-item.appendChild(meta);
-if (!track.isDrum) item.appendChild(shiftBox);
-trackListEl.appendChild(item);
+  trackListEl.appendChild(row);
 });
 
 playBtn.disabled = false;
