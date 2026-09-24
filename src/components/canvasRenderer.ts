@@ -4,6 +4,16 @@ import type { WaveformData } from '../audio/waveform';
 
 export type NoteWithMeta = ParsedNote & { color?: string };
 
+export interface NoteOverlap {
+    midi: number;
+    time: number;       // overlap start time in seconds
+    duration: number;   // overlap duration in seconds
+    baseColor: string;
+    stripeColor: string;
+}
+
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
 export class NoteRenderer {
     private canvas: HTMLCanvasElement;
     private ctx: CanvasRenderingContext2D;
@@ -60,7 +70,9 @@ export class NoteRenderer {
         notes: NoteWithMeta[],
         barLines: BarLine[] = [],
         waveform: WaveformData | null = null,
-        syncOffsetSeconds = 0
+        syncOffsetSeconds = 0,
+        overlaps: NoteOverlap[] = [],
+        showNoteLabels = true
     ): void {
         const rect = this.canvas.getBoundingClientRect();
         const hitLineY = rect.height;
@@ -74,12 +86,11 @@ export class NoteRenderer {
         const rightInactiveX = leftInactiveWidth + activeWidth;
         const rightInactiveWidth = rect.width - rightInactiveX;
 
-        // 1. Shaded Out-Of-Bounds Margins
+        // 1. Shaded Inactive Margins
         this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
         this.ctx.fillRect(0, 0, leftInactiveWidth, rect.height);
         this.ctx.fillRect(rightInactiveX, 0, rightInactiveWidth, rect.height);
 
-        // Playable Zone Boundary Markers
         this.ctx.strokeStyle = 'rgba(56, 189, 248, 0.18)';
         this.ctx.lineWidth = 1;
         this.ctx.beginPath();
@@ -91,7 +102,7 @@ export class NoteRenderer {
 
         const visibleTimeWindow = rect.height / this.pixelsPerSecond;
 
-        // 2. Vertical Waveform Monitor
+        // 2. Vertical Waveform
         if (waveform && waveform.peaks.length > 0) {
             const centerX = rightInactiveX + rightInactiveWidth / 2;
             const maxHalfWidth = (rightInactiveWidth / 2) * 0.85;
@@ -160,7 +171,7 @@ export class NoteRenderer {
             this.ctx.fillText(`m.${bar.measureNumber} (${bar.timeSignature})`, 8, y - 4);
         }
 
-        // 4. Polished Falling Notes (With Inset Gloss and Rounded Edges)
+        // 4. Base Notes (With Crisp White Outline & Inset Gloss)
         for (const note of notes) {
             const timeUntilHit = note.time - currentTime;
             if (timeUntilHit + note.duration < 0) continue;
@@ -178,7 +189,6 @@ export class NoteRenderer {
             const baseColor = note.color || '#38bdf8';
 
             this.ctx.save();
-            // Draw rounded block
             this.ctx.beginPath();
             if ((this.ctx as any).roundRect) {
                 (this.ctx as any).roundRect(x, noteY, w, noteHeight, [4, 4, 2, 2]);
@@ -189,21 +199,104 @@ export class NoteRenderer {
             this.ctx.fillStyle = isPlayable ? baseColor : 'rgba(100, 116, 139, 0.4)';
             this.ctx.fill();
 
-            // Top Specular Highlight (Giving notes tactile depth)
+            // Top gloss line
             if (isPlayable && noteHeight > 10) {
                 this.ctx.fillStyle = 'rgba(255, 255, 255, 0.28)';
                 this.ctx.fillRect(x + 1, noteY + 1, w - 2, 3);
             }
 
-            // Crisp outer stroke
-            this.ctx.strokeStyle = isPlayable ? 'rgba(0, 0, 0, 0.3)' : 'rgba(0, 0, 0, 0.4)';
-            this.ctx.lineWidth = 1;
+            // Feature 1: Crisp White Outline
+            this.ctx.strokeStyle = isPlayable ? '#ffffff' : 'rgba(255, 255, 255, 0.4)';
+            this.ctx.lineWidth = 1.5;
             this.ctx.stroke();
             this.ctx.restore();
         }
 
-        // 5. Stylized Target Hit Line
-        // Outer dimmed lines
+        // 5. Feature 4: Angled Diagonal Slashes on Overlapping Regions
+        for (const ov of overlaps) {
+            const timeUntilHit = ov.time - currentTime;
+            if (timeUntilHit + ov.duration < 0) continue;
+            if (timeUntilHit > visibleTimeWindow) continue;
+
+            const geom = this.getNoteGeometry(ov.midi);
+            if (!geom) continue;
+
+            const h = Math.max(ov.duration * this.pixelsPerSecond, 6);
+            const y = hitLineY - timeUntilHit * this.pixelsPerSecond - h;
+            const x = geom.x + 1.5;
+            const w = geom.width - 3;
+
+            this.ctx.save();
+            this.ctx.beginPath();
+            if ((this.ctx as any).roundRect) {
+                (this.ctx as any).roundRect(x, y, w, h, [3, 3, 2, 2]);
+            } else {
+                this.ctx.rect(x, y, w, h);
+            }
+            this.ctx.clip();
+
+            // Base track color underlay
+            this.ctx.fillStyle = ov.baseColor;
+            this.ctx.fill();
+
+            // Diagonal hazard slashes of overlapping track color
+            this.ctx.strokeStyle = ov.stripeColor;
+            this.ctx.lineWidth = 4;
+            const step = 8;
+            for (let offset = -h - w; offset < w + h; offset += step) {
+                this.ctx.beginPath();
+                this.ctx.moveTo(x + offset, y);
+                this.ctx.lineTo(x + offset + h, y + h);
+                this.ctx.stroke();
+            }
+
+            this.ctx.restore();
+
+            // White outline around the overlap segment
+            this.ctx.strokeStyle = '#ffffff';
+            this.ctx.lineWidth = 1.5;
+            this.ctx.strokeRect(x, y, w, h);
+        }
+
+        // 6. Feature 3: Note Pitch Labels on Falling Blocks (e.g. F#)
+        if (showNoteLabels) {
+            this.ctx.save();
+            this.ctx.font = 'bold 9px monospace';
+            this.ctx.textAlign = 'center';
+            this.ctx.textBaseline = 'middle';
+
+            for (const note of notes) {
+                const timeUntilHit = note.time - currentTime;
+                if (timeUntilHit + note.duration < 0 || timeUntilHit > visibleTimeWindow) continue;
+
+                const geom = this.getNoteGeometry(note.midi);
+                if (!geom) continue;
+
+                const isPlayable = note.midi >= this.playableStart && note.midi <= this.playableEnd;
+                if (!isPlayable) continue;
+
+                const noteHeight = Math.max(note.duration * this.pixelsPerSecond, 8);
+                const noteY = hitLineY - timeUntilHit * this.pixelsPerSecond - noteHeight;
+                const x = geom.x + 1.5;
+                const w = geom.width - 3;
+
+                const noteName = NOTE_NAMES[note.midi % 12];
+                const textX = x + w / 2;
+                // Position near the leading bottom edge
+                const textY = noteY + Math.max(noteHeight - 7, noteHeight / 2);
+
+                // Dark halo stroke for maximum contrast over bright colors
+                this.ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+                this.ctx.lineWidth = 2.5;
+                this.ctx.strokeText(noteName, textX, textY);
+
+                this.ctx.fillStyle = '#ffffff';
+                this.ctx.fillText(noteName, textX, textY);
+            }
+            this.ctx.restore();
+        }
+
+        // 7. Hit Line Beam
         this.ctx.strokeStyle = 'rgba(56, 189, 248, 0.2)';
         this.ctx.lineWidth = 2;
         this.ctx.beginPath();
@@ -213,7 +306,6 @@ export class NoteRenderer {
         this.ctx.lineTo(rect.width, hitLineY - 1);
         this.ctx.stroke();
 
-        // Vibrant strike beam across active 2 octaves
         this.ctx.strokeStyle = '#38bdf8';
         this.ctx.lineWidth = 2;
         this.ctx.beginPath();

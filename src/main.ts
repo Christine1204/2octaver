@@ -2,8 +2,8 @@ import './style.css';
 import { parseMidiBuffer } from './midi/parser';
 import { MidiInputManager } from './midi/input';
 import { KeyboardVisualizer } from './components/keyboard';
-import { NoteRenderer, type NoteWithMeta } from './components/canvasRenderer';
-import { TimelineMinimap } from './components/timeline';
+import { NoteRenderer, type NoteWithMeta, type NoteOverlap } from './components/canvasRenderer';
+import { TimelineMinimap, type LoopRegion } from './components/timeline';
 import { generateBarLines, type BarLine } from './midi/conductor';
 import { BackingTrackPlayer } from './audio/backingTrack';
 import { extractWaveformData, type WaveformData } from './audio/waveform';
@@ -23,12 +23,17 @@ const offsetLabel = document.getElementById('offset-label') as HTMLSpanElement;
 const trackListEl = document.getElementById('track-list') as HTMLDivElement;
 const playBtn = document.getElementById('play-btn') as HTMLButtonElement;
 const stopBtn = document.getElementById('stop-btn') as HTMLButtonElement;
+const loopBtn = document.getElementById('loop-btn') as HTMLButtonElement;
 const deviceInfo = document.getElementById('device-info') as HTMLDivElement;
 const octDownBtn = document.getElementById('oct-down-btn') as HTMLButtonElement;
 const octUpBtn = document.getElementById('oct-up-btn') as HTMLButtonElement;
 const autoFitBtn = document.getElementById('auto-fit-btn') as HTMLButtonElement;
 const transposeLabel = document.getElementById('transpose-label') as HTMLSpanElement;
+
+// Toggles
 const foldToggle = document.getElementById('fold-toggle') as HTMLInputElement;
+const noteLabelToggle = document.getElementById('note-label-toggle') as HTMLInputElement;
+const keyLabelToggle = document.getElementById('key-label-toggle') as HTMLInputElement;
 
 const speedSlider = document.getElementById('speed-slider') as HTMLInputElement;
 const speedLabel = document.getElementById('speed-label') as HTMLSpanElement;
@@ -51,8 +56,19 @@ const selectedTrackIds = new Set<number>();
 const trackOctaveShifts = new Map<number, number>();
 let globalTranspose = 0;
 let foldTo2Octaves = true;
-let combinedNotes: NoteWithMeta[] = [];
+let showNoteLabels = true;
 
+let combinedNotes: NoteWithMeta[] = [];
+let detectedOverlaps: NoteOverlap[] = [];
+
+// Loop State
+const loopState: LoopRegion = {
+  start: 0,
+  end: 8,
+  enabled: false,
+};
+
+// Transport State
 let isPlaying = false;
 let playbackSpeed = 1.0;
 let currentTransportTime = 0;
@@ -80,10 +96,51 @@ function foldPitchToRange(pitch: number, min = 48, max = 72): number {
   return folded;
 }
 
-// 3. Multi-Track Combiner
+// 3. Multi-Track Overlap Calculator
+function computeNoteOverlaps(notes: NoteWithMeta[]): NoteOverlap[] {
+  const notesByPitch = new Map<number, NoteWithMeta[]>();
+  for (const n of notes) {
+    if (!notesByPitch.has(n.midi)) notesByPitch.set(n.midi, []);
+    notesByPitch.get(n.midi)!.push(n);
+  }
+
+  const overlaps: NoteOverlap[] = [];
+
+  for (const [midi, pitchNotes] of notesByPitch) {
+    for (let i = 0; i < pitchNotes.length; i++) {
+      const a = pitchNotes[i];
+      const aEnd = a.time + a.duration;
+
+      for (let j = i + 1; j < pitchNotes.length; j++) {
+        const b = pitchNotes[j];
+        if (b.time >= aEnd) break;
+
+        if (a.color !== b.color) {
+          const overlapStart = Math.max(a.time, b.time);
+          const overlapEnd = Math.min(aEnd, b.time + b.duration);
+
+          if (overlapEnd - overlapStart > 0.005) {
+            overlaps.push({
+              midi,
+              time: overlapStart,
+              duration: overlapEnd - overlapStart,
+              baseColor: a.color || '#38bdf8',
+              stripeColor: b.color || '#f97316',
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return overlaps;
+}
+
+// 4. Multi-Track Combiner
 function rebuildCombinedNotes(): void {
   if (!currentSong) {
     combinedNotes = [];
+    detectedOverlaps = [];
     return;
   }
 
@@ -104,15 +161,26 @@ function rebuildCombinedNotes(): void {
   });
 
   combinedNotes.sort((a, b) => a.time - b.time);
+  detectedOverlaps = computeNoteOverlaps(combinedNotes);
 
-  minimap.draw(combinedNotes, currentBarLines);
+  minimap.draw(combinedNotes, currentBarLines, loopState, currentWaveform);
+  minimap.updateLoopMarkers(loopState);
+
   if (!isPlaying) {
     updateTargetCues(currentTransportTime);
-    renderer.draw(currentTransportTime, combinedNotes, currentBarLines, currentWaveform, currentOffsetSeconds);
+    renderer.draw(
+      currentTransportTime,
+      combinedNotes,
+      currentBarLines,
+      currentWaveform,
+      currentOffsetSeconds,
+      detectedOverlaps,
+      showNoteLabels
+    );
   }
 }
 
-// 4. Hit Line Target Cues
+// 5. Target Cues
 function updateTargetCues(time: number): void {
   const activeTargets = new Map<number, string>();
   const leadIn = 0.03;
@@ -127,7 +195,41 @@ function updateTargetCues(time: number): void {
   visualizer.setTargetNotes(activeTargets);
 }
 
-// 5. Speed Controls
+// 6. Loop Mode Controls
+function updateLoopUI(): void {
+  loopBtn.classList.toggle('active', loopState.enabled);
+  minimap.updateLoopMarkers(loopState);
+  minimap.draw(combinedNotes, currentBarLines, loopState, currentWaveform);
+}
+
+function toggleLoop(): void {
+  loopState.enabled = !loopState.enabled;
+  updateLoopUI();
+}
+
+loopBtn.addEventListener('click', toggleLoop);
+
+// Double-clicking either Marker A or B toggles loop
+minimap.onToggleLoop(() => {
+  toggleLoop();
+});
+
+// Dragging Marker A or B only repositions boundaries without force-activating loop mode
+minimap.onLoopChange((newA, newB) => {
+  const songDur = currentSong?.duration || 100;
+
+  if (newA >= 0) {
+    loopState.start = Math.max(0, Math.min(newA, loopState.end - 0.2));
+  }
+  if (newB >= 0) {
+    loopState.end = Math.min(songDur, Math.max(newB, loopState.start + 0.2));
+  }
+
+  minimap.updateLoopMarkers(loopState);
+  minimap.draw(combinedNotes, currentBarLines, loopState, currentWaveform);
+});
+
+// 7. Speed Controls
 function setPlaybackSpeed(speed: number): void {
   playbackSpeed = Math.round(speed * 100) / 100;
   speedSlider.value = playbackSpeed.toString();
@@ -151,7 +253,7 @@ presetButtons.forEach((btn) => {
   });
 });
 
-// 6. Transpose Controls
+// 8. Transpose & Feature Toggles
 function updateGlobalTranspose(shift: number): void {
   globalTranspose = shift;
   const sign = globalTranspose > 0 ? '+' : '';
@@ -161,9 +263,29 @@ function updateGlobalTranspose(shift: number): void {
 
 octDownBtn.addEventListener('click', () => updateGlobalTranspose(globalTranspose - 12));
 octUpBtn.addEventListener('click', () => updateGlobalTranspose(globalTranspose + 12));
+
 foldToggle.addEventListener('change', () => {
   foldTo2Octaves = foldToggle.checked;
   rebuildCombinedNotes();
+});
+
+noteLabelToggle.addEventListener('change', () => {
+  showNoteLabels = noteLabelToggle.checked;
+  if (!isPlaying) {
+    renderer.draw(
+      currentTransportTime,
+      combinedNotes,
+      currentBarLines,
+      currentWaveform,
+      currentOffsetSeconds,
+      detectedOverlaps,
+      showNoteLabels
+    );
+  }
+});
+
+keyLabelToggle.addEventListener('change', () => {
+  visualizer.setShowLabels(keyLabelToggle.checked);
 });
 
 autoFitBtn.addEventListener('click', () => {
@@ -183,7 +305,7 @@ currentSong.tracks.forEach((track) => {
 rebuildCombinedNotes();
 });
 
-// 7. Backing Track Handlers
+// 9. Backing Track Handlers & Waveform Ingestion
 audioInput.addEventListener('change', async (e) => {
   const file = (e.target as HTMLInputElement).files?.[0];
   if (!file) return;
@@ -199,9 +321,18 @@ try {
   audioStatus.innerText = `Ready: ${file.name.slice(0, 18)}...`;
   audioStatus.style.color = '#38bdf8';
 
-if (!isPlaying) {
-  renderer.draw(currentTransportTime, combinedNotes, currentBarLines, currentWaveform, currentOffsetSeconds);
-}
+  minimap.draw(combinedNotes, currentBarLines, loopState, currentWaveform);
+  if (!isPlaying) {
+    renderer.draw(
+      currentTransportTime,
+      combinedNotes,
+      currentBarLines,
+      currentWaveform,
+      currentOffsetSeconds,
+      detectedOverlaps,
+      showNoteLabels
+    );
+  }
 } catch (err) {
   console.error(err);
   audioStatus.innerText = 'Error loading audio file';
@@ -220,20 +351,43 @@ syncOffset.addEventListener('input', () => {
   backingTrack.setOffsetMs(ms);
 
   if (!isPlaying) {
-    renderer.draw(currentTransportTime, combinedNotes, currentBarLines, currentWaveform, currentOffsetSeconds);
+    renderer.draw(
+      currentTransportTime,
+      combinedNotes,
+      currentBarLines,
+      currentWaveform,
+      currentOffsetSeconds,
+      detectedOverlaps,
+      showNoteLabels
+    );
   }
 });
 
-// 8. Transport & Scrubbing
+// 10. Scrubbing & Master Transport Loop
 minimap.onSeek((targetTime) => {
   currentTransportTime = targetTime;
   backingTrack.seek(targetTime);
   updateTargetCues(currentTransportTime);
 
   if (!isPlaying) {
-    renderer.draw(currentTransportTime, combinedNotes, currentBarLines, currentWaveform, currentOffsetSeconds);
+    renderer.draw(
+      currentTransportTime,
+      combinedNotes,
+      currentBarLines,
+      currentWaveform,
+      currentOffsetSeconds,
+      detectedOverlaps,
+      showNoteLabels
+    );
   }
 });
+
+function seekTransport(time: number): void {
+  currentTransportTime = time;
+  backingTrack.seek(time);
+  lastFrameTimestamp = performance.now();
+  updateTargetCues(currentTransportTime);
+}
 
 function renderLoop() {
   const now = performance.now();
@@ -252,11 +406,25 @@ function renderLoop() {
       currentTransportTime += dt * playbackSpeed;
     }
 
+    if (loopState.enabled && loopState.end > loopState.start) {
+      if (currentTransportTime >= loopState.end) {
+        seekTransport(loopState.start);
+      }
+    }
+
     updateTargetCues(currentTransportTime);
-    renderer.draw(currentTransportTime, combinedNotes, currentBarLines, currentWaveform, currentOffsetSeconds);
+    renderer.draw(
+      currentTransportTime,
+      combinedNotes,
+      currentBarLines,
+      currentWaveform,
+      currentOffsetSeconds,
+      detectedOverlaps,
+      showNoteLabels
+    );
     minimap.setProgress(currentTransportTime);
 
-    if (currentSong && currentTransportTime > currentSong.duration) {
+    if (currentSong && currentTransportTime > currentSong.duration && !loopState.enabled) {
       stopPlayback();
     }
   }
@@ -267,34 +435,64 @@ requestAnimationFrame(renderLoop);
 function startPlayback() {
   if (combinedNotes.length === 0) return;
   isPlaying = true;
+
+  if (loopState.enabled && loopState.end > loopState.start) {
+    if (currentTransportTime < loopState.start || currentTransportTime >= loopState.end) {
+      currentTransportTime = loopState.start;
+    }
+  }
+
   lastFrameTimestamp = performance.now();
   backingTrack.play(currentTransportTime);
-  playBtn.innerText = 'Pause';
+  playBtn.innerText = 'Pause (Space)';
 }
 
 function pausePlayback() {
   if (!isPlaying) return;
   isPlaying = false;
   backingTrack.pause();
-  playBtn.innerText = 'Resume';
+  playBtn.innerText = 'Resume (Space)';
 }
 
 function stopPlayback() {
   isPlaying = false;
-  currentTransportTime = 0;
+  currentTransportTime = loopState.enabled && loopState.end > loopState.start ? loopState.start : 0;
   backingTrack.stop();
-  playBtn.innerText = 'Play';
-  minimap.setProgress(0);
+  if (currentTransportTime > 0) backingTrack.seek(currentTransportTime);
+
+  playBtn.innerText = 'Play (Space)';
+  minimap.setProgress(currentTransportTime);
   visualizer.clearTargets();
-  renderer.draw(0, combinedNotes, currentBarLines, currentWaveform, currentOffsetSeconds);
+  renderer.draw(
+    currentTransportTime,
+    combinedNotes,
+    currentBarLines,
+    currentWaveform,
+    currentOffsetSeconds,
+    detectedOverlaps,
+    showNoteLabels
+  );
 }
 
 playBtn.addEventListener('click', () => (isPlaying ? pausePlayback() : startPlayback()));
 stopBtn.addEventListener('click', stopPlayback);
 
-// Helper to format track titles and subtitles cleanly like Songsterr
+// Hotkeys: Space (Play/Pause), L (Loop Toggle)
+window.addEventListener('keydown', (e) => {
+  const activeEl = document.activeElement;
+  if (activeEl?.tagName === 'INPUT' && (activeEl as HTMLInputElement).type === 'text') return;
+
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (isPlaying) pausePlayback();
+    else startPlayback();
+  } else if (e.code === 'KeyL') {
+    e.preventDefault();
+    toggleLoop();
+  }
+});
+
 function formatTrackInfo(rawName: string, noteCount: number, isDrum: boolean) {
-  // Collapse duplicate whitespace and trim
   const cleanName = rawName.replace(/\s+/g, ' ').trim();
   let title = cleanName;
   let subtitle = `${noteCount} notes`;
@@ -302,7 +500,7 @@ function formatTrackInfo(rawName: string, noteCount: number, isDrum: boolean) {
   if (cleanName.includes('|')) {
     const parts = cleanName.split('|').map((s) => s.trim());
     if (parts.length >= 3) {
-      title = parts[2]; // e.g. "Lead Guitar"
+      title = parts[2];
       subtitle = `${parts[0]} • ${parts[1]} • ${noteCount} notes`;
     } else if (parts.length === 2) {
       title = parts[1];
@@ -318,7 +516,7 @@ function formatTrackInfo(rawName: string, noteCount: number, isDrum: boolean) {
   return { title, subtitle };
 }
 
-// 9. MIDI File Upload & Songsterr-Style Track List
+// 11. MIDI File Upload
 fileInput.addEventListener('change', async (event) => {
   const file = (event.target as HTMLInputElement).files?.[0];
   if (!file) return;
@@ -334,8 +532,14 @@ fileInput.addEventListener('change', async (event) => {
   );
 
   minimap.setDuration(currentSong.duration);
+  minimap.setBarLines(currentBarLines);
   minimap.resize();
   renderer.resize();
+
+  // Set default initial loop window snapped to measure 1 and measure 3
+  loopState.start = currentBarLines[0]?.time ?? 0;
+  loopState.end = currentBarLines[2]?.time ?? Math.min(8, currentSong.duration);
+  loopState.enabled = false;
 
   selectedTrackIds.clear();
   trackOctaveShifts.clear();
@@ -357,16 +561,13 @@ currentSong.tracks.forEach((track) => {
     row.classList.add('active');
   }
 
-  // Status Dot
   const dot = document.createElement('div');
   dot.className = 'track-dot';
 
-  // Icon
   const icon = document.createElement('div');
   icon.className = 'track-icon';
   icon.innerHTML = getInstrumentIcon(track.name, track.isDrum, track.instrumentNumber);
 
-  // Text (Title & Subtitle)
   const { title, subtitle } = formatTrackInfo(track.name, track.notes.length, track.isDrum);
   const textContainer = document.createElement('div');
   textContainer.className = 'track-text';
@@ -383,7 +584,6 @@ currentSong.tracks.forEach((track) => {
   textContainer.appendChild(titleEl);
   textContainer.appendChild(subEl);
 
-  // Clicking anywhere on the row toggles selection
   row.addEventListener('click', () => {
     const isActive = selectedTrackIds.has(track.id);
     if (isActive) {
@@ -400,7 +600,6 @@ currentSong.tracks.forEach((track) => {
   row.appendChild(icon);
   row.appendChild(textContainer);
 
-  // Compact Octave Stepper on the right
   if (!track.isDrum) {
     const stepper = document.createElement('div');
     stepper.className = 'track-stepper';
@@ -451,6 +650,7 @@ playBtn.disabled = false;
 stopBtn.disabled = false;
 autoFitBtn.disabled = false;
 
+updateLoopUI();
 rebuildCombinedNotes();
 stopPlayback();
 });

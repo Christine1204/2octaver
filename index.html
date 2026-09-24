@@ -43,8 +43,12 @@
         <!-- Transport & Speed Controls -->
         <section class="sidebar-group transport-controls">
           <div class="btn-row">
-            <button id="play-btn" disabled>Play</button>
+            <button id="play-btn" disabled>Play (Space)</button>
             <button id="stop-btn" disabled>Stop</button>
+            <button id="loop-btn" class="loop-toggle-btn" title="Toggle Loop Mode (L or Double-Click Marker)">
+              <span class="loop-dot"></span>
+              Loop
+            </button>
           </div>
 
           <div class="speed-control-box">
@@ -70,14 +74,24 @@
             <button id="auto-fit-btn" class="secondary-btn" disabled>Auto Fit</button>
           </div>
 
-          <!-- Single Octave Folding Toggle -->
+          <!-- Feature Toggles -->
           <label class="toggle-box">
             <input type="checkbox" id="fold-toggle" checked />
             <span>Fold all notes to 2 octaves</span>
           </label>
+
+          <label class="toggle-box">
+            <input type="checkbox" id="note-label-toggle" checked />
+            <span>Show names on falling notes</span>
+          </label>
+
+          <label class="toggle-box">
+            <input type="checkbox" id="key-label-toggle" checked />
+            <span>Show names on piano keys</span>
+          </label>
         </section>
 
-        <!-- Multi-Track Checklist -->
+        <!-- Songsterr-style Multi-Track List -->
         <section class="sidebar-group tracks-section">
           <h3>Tracks</h3>
           <div id="track-list" class="track-list">
@@ -88,11 +102,27 @@
 
       <!-- Main Visual Viewport -->
       <main id="viewport">
-        <div class="timeline-container">
+        <!-- Integrated DAW Overview & Loop Track -->
+        <div class="timeline-container" id="timeline-container">
           <canvas id="timeline-canvas"></canvas>
+
+          <!-- Slideable Loop Marker A -->
+          <div id="loop-marker-a" class="loop-slider-marker" title="Drag to adjust Start (Snaps to bars) • Double-click to toggle loop">
+            <div class="loop-handle-tag">A</div>
+            <div class="loop-handle-line"></div>
+          </div>
+
+          <!-- Slideable Loop Marker B -->
+          <div id="loop-marker-b" class="loop-slider-marker" title="Drag to adjust End (Snaps to bars) • Double-click to toggle loop">
+            <div class="loop-handle-tag">B</div>
+            <div class="loop-handle-line"></div>
+          </div>
+
+          <!-- Playhead -->
           <div id="timeline-playhead"></div>
         </div>
 
+        <!-- 4-Octave Falling Notes Stage -->
         <div class="canvas-stage">
           <canvas id="note-canvas"></canvas>
         </div>

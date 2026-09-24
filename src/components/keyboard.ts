@@ -1,3 +1,5 @@
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
 export class KeyboardVisualizer {
     private container: HTMLElement;
     private startNote = 36;       // C2
@@ -7,6 +9,7 @@ export class KeyboardVisualizer {
 
     private userActiveNotes = new Set<number>();
     private currentTargets = new Map<number, string>();
+    private showLabels = true;
 
     constructor(containerId: string) {
         const el = document.getElementById(containerId);
@@ -57,6 +60,12 @@ export class KeyboardVisualizer {
         this.setTargetNotes(new Map());
     }
 
+    public setShowLabels(enabled: boolean): void {
+        this.showLabels = enabled;
+        const wrapper = this.container.querySelector('.piano-wrapper');
+        wrapper?.classList.toggle('show-all-labels', enabled);
+    }
+
     private isBlackKey(noteNumber: number): boolean {
         return [1, 3, 6, 8, 10].includes(noteNumber % 12);
     }
@@ -64,7 +73,7 @@ export class KeyboardVisualizer {
     public render(): void {
         this.container.innerHTML = '';
         const wrapper = document.createElement('div');
-        wrapper.className = 'piano-wrapper';
+        wrapper.className = `piano-wrapper ${this.showLabels ? 'show-all-labels' : ''}`;
 
         const totalWhiteKeys = 29;
         const whiteWidthPct = 100 / totalWhiteKeys;
@@ -76,9 +85,10 @@ export class KeyboardVisualizer {
             const note = this.startNote + i;
             const isBlack = this.isBlackKey(note);
             const isPlayable = note >= this.playableStart && note <= this.playableEnd;
+            const isC = note % 12 === 0;
 
             const key = document.createElement('div');
-            key.className = `key ${isBlack ? 'black' : 'white'} ${!isPlayable ? 'dimmed' : ''}`;
+            key.className = `key ${isBlack ? 'black' : 'white'} ${!isPlayable ? 'dimmed' : ''} ${isC ? 'is-c' : ''}`;
             key.dataset.note = note.toString();
 
             if (isBlack) {
@@ -91,13 +101,16 @@ export class KeyboardVisualizer {
             pip.className = 'target-pip';
             key.appendChild(pip);
 
-            if (note % 12 === 0) {
-                const label = document.createElement('span');
-                label.className = 'key-label';
+            // Label (C root with octave number, others with pitch class)
+            const label = document.createElement('span');
+            label.className = 'key-label';
+            if (isC) {
                 const octaveNumber = Math.floor(note / 12) - 1;
                 label.innerText = `C${octaveNumber}`;
-                key.appendChild(label);
+            } else {
+                label.innerText = NOTE_NAMES[note % 12];
             }
+            key.appendChild(label);
 
             wrapper.appendChild(key);
         }
