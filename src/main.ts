@@ -7,6 +7,7 @@ import { TimelineMinimap, type LoopRegion } from './components/timeline';
 import { generateBarLines, type BarLine } from './midi/conductor';
 import { BackingTrackPlayer } from './audio/backingTrack';
 import { extractWaveformData, type WaveformData } from './audio/waveform';
+import { assignFingering, enforceHandTerritories } from './midi/fingering';
 import { getInstrumentIcon } from './components/icons';
 import type { ParsedSong } from './midi/types';
 
@@ -38,6 +39,7 @@ const deviceInfo = document.getElementById('device-info') as HTMLDivElement;
 
 // Toggles & Live Accuracy HUD
 const waitToggle = document.getElementById('wait-toggle') as HTMLInputElement;
+const fingerToggle = document.getElementById('finger-toggle') as HTMLInputElement;
 const foldToggle = document.getElementById('fold-toggle') as HTMLInputElement;
 const noteLabelToggle = document.getElementById('note-label-toggle') as HTMLInputElement;
 const keyLabelToggle = document.getElementById('key-label-toggle') as HTMLInputElement;
@@ -66,8 +68,10 @@ let currentOffsetSeconds = 0;
 
 const selectedTrackIds = new Set<number>();
 const trackOctaveShifts = new Map<number, number>();
+const trackHandMap = new Map<number, 'RH' | 'LH'>();
 let foldTo2Octaves = true;
 let showNoteLabels = true;
+let showFingering = true;
 let waitForNotes = false;
 
 let combinedNotes: NoteWithMeta[] = [];
@@ -76,11 +80,9 @@ let detectedOverlaps: NoteOverlap[] = [];
 // Physical pressed keys on MIDI keyboard
 const physicalPressedKeys = new Set<number>();
 
-// -------------------------------------------------------------
-// STRIKE-TO-ADVANCE PRACTICE TOLERANCES
-// -------------------------------------------------------------
-const LATE_GRACE_WINDOW = 0.22; // 220ms late window before pausing
-const EARLY_HIT_WINDOW = 0.35;  // 350ms early strike buffer
+// Strike-To-Advance Precision Rhythm Tolerances
+const EARLY_HIT_WINDOW = 0.14;  // 140ms early strike buffer
+const LATE_GRACE_WINDOW = 0.09; // 90ms late window before pausing
 
 // Practice Mode State
 const noteStruckMap = new Map<number, boolean>();
@@ -143,7 +145,7 @@ function updateAccuracyHUD(): void {
   }
 }
 
-// 2. Hardware Input & Strike-to-Advance Resolver
+// 2. Hardware Input & Single-Note Consumption
 midiInput
 .init()
 .then((devices) => {
@@ -160,43 +162,61 @@ midiInput.subscribe((note, _vel, isNoteOn) => {
     physicalPressedKeys.add(note);
 
     if (isPlaying) {
-      const maxLateWindow = waitForNotes ? 0.70 : 0.20;
+      let bestNote: NoteWithMeta | null = null;
+      let bestAbsDiff = Infinity;
+      const maxLate = isWaitingForInput ? 0.60 : LATE_GRACE_WINDOW;
 
-      // Check all notes sharing this pitch in the hit window
+      // Match ONLY the single closest un-struck note for this pitch
       for (const n of combinedNotes) {
         if (n.midi !== note || n.midi < 48 || n.midi > 72) continue;
+        if (noteStruckMap.get(n.id)) continue;
 
         const timeDiff = currentTransportTime - n.time;
-        const isEligible = timeDiff >= -EARLY_HIT_WINDOW && timeDiff <= maxLateWindow;
+        const isEligible = timeDiff >= -EARLY_HIT_WINDOW && timeDiff <= maxLate;
 
-        if (isEligible && !noteStruckMap.get(n.id)) {
-          // Permanently satisfy this note: never freezes again!
-          noteStruckMap.set(n.id, true);
-
-          // Clear from red waiting alert
-          currentWaitingNoteIds.delete(n.id);
-          currentWaitingMidis.delete(n.midi);
-
-          // Accuracy scoring
-          const absDelta = Math.abs(timeDiff);
-          let timingScore = 100;
-          if (absDelta <= 0.06) timingScore = 100;
-          else if (absDelta <= 0.12) timingScore = 85;
-          else if (absDelta <= 0.20) timingScore = 65;
-          else timingScore = 45;
-
-          const existing = noteEvalMap.get(n.id);
-          if (!existing || !existing.evaluated) {
-            sessionEvaluatedCount++;
-            sessionHitCount++;
-            sessionRhythmScoreSum += timingScore;
-            noteEvalMap.set(n.id, { evaluated: true, hit: true, timingScore });
-            updateAccuracyHUD();
+        if (isEligible) {
+          const absDiff = Math.abs(timeDiff);
+          if (absDiff < bestAbsDiff) {
+            bestAbsDiff = absDiff;
+            bestNote = n;
           }
         }
       }
 
-      // If user hit the note while paused waiting, resume immediately!
+      if (bestNote) {
+        noteStruckMap.set(bestNote.id, true);
+        currentWaitingNoteIds.delete(bestNote.id);
+        currentWaitingMidis.delete(bestNote.midi);
+
+        // Also satisfy parallel unison tracks playing the exact same note
+        for (const sibling of combinedNotes) {
+          if (
+            sibling.id !== bestNote.id &&
+            sibling.midi === bestNote.midi &&
+            Math.abs(sibling.time - bestNote.time) < 0.015
+          ) {
+            noteStruckMap.set(sibling.id, true);
+            currentWaitingNoteIds.delete(sibling.id);
+          }
+        }
+
+        let timingScore = 100;
+        if (bestAbsDiff <= 0.04) timingScore = 100;
+        else if (bestAbsDiff <= 0.08) timingScore = 85;
+        else if (bestAbsDiff <= 0.12) timingScore = 65;
+        else timingScore = 45;
+
+        const existing = noteEvalMap.get(bestNote.id);
+        if (!existing || !existing.evaluated) {
+          sessionEvaluatedCount++;
+          sessionHitCount++;
+          sessionRhythmScoreSum += timingScore;
+          noteEvalMap.set(bestNote.id, { evaluated: true, hit: true, timingScore });
+          updateAccuracyHUD();
+        }
+      }
+
+      // Resume immediately if we satisfied the note halting the engine
       if (isWaitingForInput && currentWaitingNoteIds.size === 0) {
         isWaitingForInput = false;
         lastFrameTimestamp = performance.now();
@@ -256,7 +276,7 @@ function computeNoteOverlaps(notes: NoteWithMeta[]): NoteOverlap[] {
   return overlaps;
 }
 
-// 5. Multi-Track Combiner
+// 5. Multi-Track Combiner & Territory-Enforced Fingering
 function rebuildCombinedNotes(): void {
   if (!currentSong) {
     combinedNotes = [];
@@ -269,17 +289,33 @@ function rebuildCombinedNotes(): void {
   combinedNotes = activeTracks.flatMap((track) => {
     const color = TRACK_PALETTE[track.id % TRACK_PALETTE.length];
     const trackShift = trackOctaveShifts.get(track.id) ?? 0;
+    const hand = trackHandMap.get(track.id) ?? 'RH';
 
-    return track.notes.map((n) => {
-      let finalPitch = n.midi + trackShift;
-      if (foldTo2Octaves && !track.isDrum) {
-        finalPitch = foldPitchToRange(finalPitch, 48, 72);
-      }
-      return { ...n, midi: finalPitch, color };
-    });
+  return track.notes.map((n) => {
+    let finalPitch = n.midi + trackShift;
+    if (foldTo2Octaves && !track.isDrum) {
+      finalPitch = foldPitchToRange(finalPitch, 48, 72);
+    }
+    return { ...n, midi: finalPitch, color, hand };
+  });
   });
 
+  // Sort notes chronologically
   combinedNotes.sort((a, b) => a.time - b.time);
+
+  // Enforce hand territories: keeps LH strictly below RH without crossover
+  if (foldTo2Octaves) {
+    enforceHandTerritories(combinedNotes);
+  }
+
+  // Calculate ergonomic fingering per hand
+  const playable = combinedNotes.filter((n) => n.midi >= 48 && n.midi <= 72);
+  const rhNotes = playable.filter((n) => n.hand === 'RH');
+  const lhNotes = playable.filter((n) => n.hand === 'LH');
+
+  assignFingering(rhNotes, 'RH');
+  assignFingering(lhNotes, 'LH');
+
   detectedOverlaps = computeNoteOverlaps(combinedNotes);
 
   minimap.draw(combinedNotes, currentBarLines, loopState, currentWaveform, currentOffsetSeconds);
@@ -295,11 +331,11 @@ function rebuildCombinedNotes(): void {
       currentOffsetSeconds,
       detectedOverlaps,
       showNoteLabels,
-      currentWaitingNoteIds
+      currentWaitingNoteIds,
+      showFingering
     );
   }
 }
-
 
 // 6. Target Cues & Red Waiting Key Indicators
 function updateTargetCues(time: number): void {
@@ -308,7 +344,6 @@ function updateTargetCues(time: number): void {
 
   for (const note of combinedNotes) {
     if (note.time > time + leadIn) break;
-    // Keep target active for the full duration of the note
     const noteEnd = note.time + Math.max(note.duration, 0.25);
     if (time >= note.time - leadIn && time <= noteEnd) {
       activeTargets.set(note.midi, note.color || '#38bdf8');
@@ -356,6 +391,23 @@ waitToggle.addEventListener('change', () => {
   }
 });
 
+fingerToggle.addEventListener('change', () => {
+  showFingering = fingerToggle.checked;
+  if (!isPlaying) {
+    renderer.draw(
+      currentTransportTime,
+      combinedNotes,
+      currentBarLines,
+      currentWaveform,
+      currentOffsetSeconds,
+      detectedOverlaps,
+      showNoteLabels,
+      currentWaitingNoteIds,
+      showFingering
+    );
+  }
+});
+
 foldToggle.addEventListener('change', () => {
   foldTo2Octaves = foldToggle.checked;
   rebuildCombinedNotes();
@@ -372,7 +424,8 @@ noteLabelToggle.addEventListener('change', () => {
       currentOffsetSeconds,
       detectedOverlaps,
       showNoteLabels,
-      currentWaitingNoteIds
+      currentWaitingNoteIds,
+      showFingering
     );
   }
 });
@@ -385,11 +438,10 @@ autoFitBtn.addEventListener('click', () => {
   if (!currentSong) return;
 
   currentSong.tracks.forEach((track) => {
-    trackOctaveShifts.set(track.id, track.defaultOctaveShift);
+    trackOctaveShifts.set(track.id, 0);
     const label = document.getElementById(`track-shift-${track.id}`);
     if (label) {
-      const sign = track.defaultOctaveShift > 0 ? '+' : '';
-      label.innerText = `${sign}${track.defaultOctaveShift}`;
+      label.innerText = '+0';
     }
   });
 
@@ -439,7 +491,8 @@ function updateSyncOffsetCalibration(): void {
       currentOffsetSeconds,
       detectedOverlaps,
       showNoteLabels,
-      currentWaitingNoteIds
+      currentWaitingNoteIds,
+      showFingering
     );
   }
 }
@@ -524,7 +577,8 @@ minimap.onSeek((targetTime) => {
       currentOffsetSeconds,
       detectedOverlaps,
       showNoteLabels,
-      currentWaitingNoteIds
+      currentWaitingNoteIds,
+      showFingering
     );
   }
 });
@@ -536,40 +590,35 @@ function seekTransport(time: number): void {
   updateTargetCues(currentTransportTime);
 }
 
-// 13. Pure Strike-To-Advance Practice Engine
+// 13. Practice Engine Loop
 function renderLoop() {
   const now = performance.now();
   const dt = (now - lastFrameTimestamp) / 1000;
   lastFrameTimestamp = now;
 
   if (isPlaying) {
-    // -------------------------------------------------------------
-    // PURE STRIKE-TO-ADVANCE ENGINE (NO SUSTAIN TRAPS)
-    // -------------------------------------------------------------
     if (waitForNotes) {
       let mustWait = false;
       let pausePoint = currentTransportTime;
       const playable = combinedNotes.filter((n) => n.midi >= 48 && n.midi <= 72);
-
-      // Collect notes that have reached the hit line and need strikes
       const missingNotes: NoteWithMeta[] = [];
 
       for (const n of playable) {
         if (n.time > currentTransportTime + 0.01) break;
 
         if (!noteStruckMap.get(n.id)) {
-          // If the player is ALREADY physically holding this key down, satisfy immediately!
-          if (physicalPressedKeys.has(n.midi)) {
+          // Only auto-resolve held keys if we are ALREADY halted waiting
+          if (isWaitingForInput && physicalPressedKeys.has(n.midi)) {
             noteStruckMap.set(n.id, true);
             continue;
           }
 
-          // If still within late grace period, glide forward naturally
+          // Let playback glide forward smoothly during the late grace window
           if (n.time + LATE_GRACE_WINDOW > currentTransportTime) {
             continue;
           }
 
-          // Exceeded grace window: player missed this strike!
+          // Halt promptly when beyond late window without strike
           missingNotes.push(n);
           mustWait = true;
           pausePoint = n.time + LATE_GRACE_WINDOW;
@@ -577,7 +626,6 @@ function renderLoop() {
       }
 
       if (mustWait) {
-        // Halt and populate RED waiting alerts on keys and blocks
         currentTransportTime = pausePoint;
         currentWaitingNoteIds.clear();
         currentWaitingMidis.clear();
@@ -603,7 +651,6 @@ function renderLoop() {
       }
     }
 
-    // Transport Clock Advance
     if (!isWaitingForInput) {
       if (backingTrack.hasTrack()) {
         const audioTime = backingTrack.getCurrentTime();
@@ -617,11 +664,10 @@ function renderLoop() {
       }
     }
 
-    // Normal Mode Miss Evaluation
     if (!waitForNotes) {
       for (const n of combinedNotes) {
         if (n.midi < 48 || n.midi > 72) continue;
-        if (n.time < currentTransportTime - 0.20) {
+        if (n.time < currentTransportTime - 0.15) {
           const evalState = noteEvalMap.get(n.id);
           if (!evalState) {
             sessionEvaluatedCount++;
@@ -634,7 +680,6 @@ function renderLoop() {
       }
     }
 
-    // Loop Jump
     if (loopState.enabled && loopState.end > loopState.start) {
       if (currentTransportTime >= loopState.end) {
         seekTransport(loopState.start);
@@ -650,7 +695,8 @@ function renderLoop() {
       currentOffsetSeconds,
       detectedOverlaps,
       showNoteLabels,
-      currentWaitingNoteIds
+      currentWaitingNoteIds,
+      showFingering
     );
     minimap.setProgress(currentTransportTime);
 
@@ -709,7 +755,8 @@ function stopPlayback() {
     currentOffsetSeconds,
     detectedOverlaps,
     showNoteLabels,
-    currentWaitingNoteIds
+    currentWaitingNoteIds,
+    showFingering
   );
 }
 
@@ -755,7 +802,7 @@ function formatTrackInfo(rawName: string, noteCount: number, isDrum: boolean) {
   return { title, subtitle };
 }
 
-// 15. MIDI File Ingestion
+// 15. MIDI File Ingestion & Track UI Setup
 fileInput.addEventListener('change', async (event) => {
   const file = (event.target as HTMLInputElement).files?.[0];
   if (!file) return;
@@ -781,10 +828,16 @@ fileInput.addEventListener('change', async (event) => {
 
   selectedTrackIds.clear();
   trackOctaveShifts.clear();
+  trackHandMap.clear();
 
   trackListEl.innerHTML = '';
 currentSong.tracks.forEach((track) => {
-  trackOctaveShifts.set(track.id, track.defaultOctaveShift);
+  trackOctaveShifts.set(track.id, 0);
+
+  const nameLower = track.name.toLowerCase();
+  const isBassTrack = nameLower.includes('bass') || nameLower.includes('left');
+  const defaultHand: 'RH' | 'LH' = isBassTrack ? 'LH' : 'RH';
+  trackHandMap.set(track.id, defaultHand);
 
   const color = TRACK_PALETTE[track.id % TRACK_PALETTE.length];
   const row = document.createElement('div');
@@ -837,6 +890,25 @@ currentSong.tracks.forEach((track) => {
   row.appendChild(textContainer);
 
   if (!track.isDrum) {
+    const handBtn = document.createElement('button');
+    handBtn.type = 'button';
+    handBtn.className = `hand-toggle-btn ${defaultHand.toLowerCase()}`;
+    handBtn.innerText = defaultHand;
+    handBtn.title = `Toggle hand (Currently ${defaultHand === 'RH' ? 'Right Hand' : 'Left Hand'})`;
+
+    handBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const currentHand = trackHandMap.get(track.id) ?? 'RH';
+      const nextHand: 'RH' | 'LH' = currentHand === 'RH' ? 'LH' : 'RH';
+      trackHandMap.set(track.id, nextHand);
+
+      handBtn.innerText = nextHand;
+      handBtn.className = `hand-toggle-btn ${nextHand.toLowerCase()}`;
+      handBtn.title = `Toggle hand (Currently ${nextHand === 'RH' ? 'Right Hand' : 'Left Hand'})`;
+
+      rebuildCombinedNotes();
+    });
+
     const stepper = document.createElement('div');
     stepper.className = 'track-stepper';
 
@@ -844,12 +916,10 @@ currentSong.tracks.forEach((track) => {
     downBtn.className = 'stepper-btn';
     downBtn.innerText = '-';
 
-    const shiftVal = track.defaultOctaveShift;
-    const sign = shiftVal > 0 ? '+' : '';
     const shiftLabel = document.createElement('span');
     shiftLabel.id = `track-shift-${track.id}`;
     shiftLabel.className = 'stepper-val';
-    shiftLabel.innerText = `${sign}${shiftVal}`;
+    shiftLabel.innerText = '+0';
 
     const upBtn = document.createElement('button');
     upBtn.className = 'stepper-btn';
@@ -876,6 +946,8 @@ upBtn.addEventListener('click', (e) => {
 stepper.appendChild(downBtn);
 stepper.appendChild(shiftLabel);
 stepper.appendChild(upBtn);
+
+row.appendChild(handBtn);
 row.appendChild(stepper);
   }
 
@@ -887,6 +959,7 @@ stopBtn.disabled = false;
 autoFitBtn.disabled = false;
 
 updateLoopUI();
+updateSyncOffsetCalibration();
 rebuildCombinedNotes();
 stopPlayback();
 });

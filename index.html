@@ -35,7 +35,6 @@
         <section class="sidebar-section">
           <h3 class="section-title">Audio & Sync</h3>
           <div class="control-box">
-            <!-- Audio Volume -->
             <div class="control-row">
               <div class="label-with-value">
                 <label for="audio-volume">Audio Volume</label>
@@ -47,7 +46,6 @@
               <input type="range" id="audio-volume" min="0" max="1" step="0.05" value="0.8" />
             </div>
 
-            <!-- Coarse Sync Delay (±10s) -->
             <div class="control-row">
               <div class="label-with-value">
                 <label for="coarse-sync-slider">Coarse Sync (±10s)</label>
@@ -59,7 +57,6 @@
               <input type="range" id="coarse-sync-slider" min="-10" max="10" step="0.1" value="0" />
             </div>
 
-            <!-- Fine Sync Delay (±1s / ±1000ms) -->
             <div class="control-row">
               <div class="label-with-value">
                 <label for="fine-sync-slider">Fine Sync (±1s)</label>
@@ -107,6 +104,11 @@
             <label class="toggle-box practice-toggle">
               <input type="checkbox" id="wait-toggle" />
               <span>Wait for notes (Practice Mode)</span>
+            </label>
+
+            <label class="toggle-box">
+              <input type="checkbox" id="finger-toggle" checked />
+              <span>Show fingering hints (1–5)</span>
             </label>
 
             <label class="toggle-box">

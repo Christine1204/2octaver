@@ -2,7 +2,11 @@ import type { ParsedNote } from '../midi/types';
 import type { BarLine } from '../midi/conductor';
 import type { WaveformData } from '../audio/waveform';
 
-export type NoteWithMeta = ParsedNote & { color?: string };
+export type NoteWithMeta = ParsedNote & {
+    color?: string;
+    finger?: number;
+    hand?: 'RH' | 'LH';
+};
 
 export interface NoteOverlap {
     midi: number;
@@ -75,7 +79,8 @@ export class NoteRenderer {
         syncOffsetSeconds = 0,
         overlaps: NoteOverlap[] = [],
         showNoteLabels = true,
-        waitingNoteIds: Set<number> = new Set()
+        waitingNoteIds: Set<number> = new Set(),
+                showFingering = true
     ): void {
         const rect = this.canvas.getBoundingClientRect();
         const hitLineY = rect.height - this.hitLineBuffer;
@@ -89,7 +94,7 @@ export class NoteRenderer {
         const rightInactiveX = leftInactiveWidth + activeWidth;
         const rightInactiveWidth = rect.width - rightInactiveX;
 
-        // 1. Shaded Out-Of-Bounds Margins
+        // 1. Inactive Range Margins
         this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
         this.ctx.fillRect(0, 0, leftInactiveWidth, rect.height);
         this.ctx.fillRect(rightInactiveX, 0, rightInactiveWidth, rect.height);
@@ -105,7 +110,7 @@ export class NoteRenderer {
 
         const visibleTimeWindow = hitLineY / this.pixelsPerSecond;
 
-        // 2. Vertical Waveform Monitor
+        // 2. Vertical Waveform
         if (waveform && waveform.peaks.length > 0) {
             const centerX = rightInactiveX + rightInactiveWidth / 2;
             const maxHalfWidth = (rightInactiveWidth / 2) * 0.85;
@@ -155,7 +160,7 @@ export class NoteRenderer {
             }
         }
 
-        // 3. Conductor Bar Lines
+        // 3. Bar Lines
         for (const bar of barLines) {
             const timeUntilHit = bar.time - currentTime;
             if (timeUntilHit < -0.1 || timeUntilHit > visibleTimeWindow) continue;
@@ -205,31 +210,27 @@ export class NoteRenderer {
             this.ctx.fillStyle = isPlayable ? baseColor : 'rgba(100, 116, 139, 0.4)';
             this.ctx.fill();
 
-            // Top gloss highlight
             if (isPlayable && noteHeight > 10) {
                 this.ctx.fillStyle = isWaiting ? 'rgba(255, 255, 255, 0.45)' : 'rgba(255, 255, 255, 0.28)';
                 this.ctx.fillRect(x + 1, noteY + 1, w - 2, 3);
             }
 
-            // Border: Pulsing red when waiting, dark charcoal for black keys, crisp white for white keys
             if (isWaiting) {
                 this.ctx.strokeStyle = '#ffffff';
                 this.ctx.lineWidth = 2.5;
                 this.ctx.shadowColor = '#ef4444';
                 this.ctx.shadowBlur = 10;
             } else if (!isPlayable) {
-                this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+                this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
                 this.ctx.lineWidth = 1;
                 this.ctx.shadowBlur = 0;
             } else if (isBlack) {
-                // High-contrast dark charcoal outline for accidental/black keys
-                this.ctx.strokeStyle = '#0b0f19';
+                this.ctx.strokeStyle = '#64748b'; // Slate gray
                 this.ctx.lineWidth = 2;
                 this.ctx.shadowBlur = 0;
             } else {
-                // Crisp white outline for natural/white keys
-                this.ctx.strokeStyle = '#ffffff';
-                this.ctx.lineWidth = 1.5;
+                this.ctx.strokeStyle = '#ffffff'; // White
+                this.ctx.lineWidth = 1.8;
                 this.ctx.shadowBlur = 0;
             }
 
@@ -275,15 +276,16 @@ export class NoteRenderer {
 
             this.ctx.restore();
 
-            this.ctx.strokeStyle = '#ffffff';
-            this.ctx.lineWidth = 1.5;
+            const isBlack = [1, 3, 6, 8, 10].includes(ov.midi % 12);
+            this.ctx.strokeStyle = isBlack ? '#64748b' : '#ffffff';
+            this.ctx.lineWidth = 1.8;
             this.ctx.strokeRect(x, y, w, h);
         }
 
-        // 6. High-Contrast Note Pitch Badges
+        // 6. Badges with Hand Indicators (e.g., "D# R2" or "C L5")
         if (showNoteLabels) {
             this.ctx.save();
-            this.ctx.font = 'bold 10px monospace';
+            this.ctx.font = 'bold 9px monospace';
             this.ctx.textAlign = 'center';
             this.ctx.textBaseline = 'middle';
 
@@ -304,15 +306,18 @@ export class NoteRenderer {
                 const w = geom.width - 3;
 
                 const noteName = NOTE_NAMES[note.midi % 12];
+                const handChar = note.hand === 'LH' ? 'L' : 'R';
+                const displayText = showFingering && note.finger ? `${noteName} ${handChar}${note.finger}` : noteName;
+
                 const textX = Math.floor(x + w / 2);
                 const textY = Math.floor(noteY + Math.max(noteHeight - 9, noteHeight / 2));
 
-                const pillWidth = Math.min(w - 2, 22);
+                const pillWidth = Math.min(w - 2, displayText.length > 4 ? 36 : displayText.length > 2 ? 28 : 22);
                 const pillHeight = 13;
                 const pillX = textX - pillWidth / 2;
                 const pillY = textY - pillHeight / 2;
 
-                this.ctx.fillStyle = isWaiting ? '#b91c1c' : 'rgba(6, 10, 18, 0.88)';
+                this.ctx.fillStyle = isWaiting ? '#b91c1c' : 'rgba(15, 23, 42, 0.9)';
                 this.ctx.beginPath();
                 if ((this.ctx as any).roundRect) {
                     (this.ctx as any).roundRect(pillX, pillY, pillWidth, pillHeight, 3);
@@ -321,13 +326,22 @@ export class NoteRenderer {
                 }
                 this.ctx.fill();
 
+                // Border: red if waiting, amber if Left Hand, cyan-slate if Right Hand
+                this.ctx.strokeStyle = isWaiting
+                ? '#ef4444'
+                : note.hand === 'LH'
+                ? '#f59e0b'
+                : '#38bdf8';
+                this.ctx.lineWidth = 1;
+                this.ctx.stroke();
+
                 this.ctx.fillStyle = '#ffffff';
-                this.ctx.fillText(noteName, textX, textY);
+                this.ctx.fillText(displayText, textX, textY);
             }
             this.ctx.restore();
         }
 
-        // 7. Hit-Line Threshold with Buffer Clearance
+        // 7. Hit-Line Threshold
         this.ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
         this.ctx.fillRect(0, hitLineY, rect.width, this.hitLineBuffer);
 

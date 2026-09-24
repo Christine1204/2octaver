@@ -917,3 +917,36 @@ box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.7);
 .key.black.waiting-active .key-label {
   color: #fecaca !important;
 }
+/* Track Card Hand Switcher (RH / LH) */
+.hand-toggle-btn {
+  background: #090e18;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 800;
+  padding: 0 6px;
+  height: 22px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  box-shadow: none;
+}
+
+.hand-toggle-btn:hover {
+  border-color: var(--border-bright);
+  color: #fff;
+  transform: none;
+}
+
+.hand-toggle-btn.rh {
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.4);
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.hand-toggle-btn.lh {
+  color: #f59e0b; /* Warm amber for Left Hand */
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.08);
+}
