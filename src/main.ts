@@ -60,7 +60,6 @@ let currentSong: ParsedSong | null = null;
 let currentBarLines: BarLine[] = [];
 let currentWaveform: WaveformData | null = null;
 
-// Two-tier sync delay state
 let coarseOffsetSec = 0;
 let fineOffsetMs = 0;
 let currentOffsetSeconds = 0;
@@ -76,7 +75,17 @@ let detectedOverlaps: NoteOverlap[] = [];
 
 // Physical pressed keys on MIDI keyboard
 const physicalPressedKeys = new Set<number>();
+
+// -------------------------------------------------------------
+// STRIKE-TO-ADVANCE PRACTICE TOLERANCES
+// -------------------------------------------------------------
+const LATE_GRACE_WINDOW = 0.22; // 220ms late window before pausing
+const EARLY_HIT_WINDOW = 0.35;  // 350ms early strike buffer
+
+// Practice Mode State
 const noteStruckMap = new Map<number, boolean>();
+const currentWaitingNoteIds = new Set<number>();
+const currentWaitingMidis = new Set<number>();
 let isWaitingForInput = false;
 
 // Live Session Accuracy State
@@ -107,6 +116,8 @@ let lastFrameTimestamp = performance.now();
 function resetSessionAccuracy(): void {
   noteEvalMap.clear();
   noteStruckMap.clear();
+  currentWaitingNoteIds.clear();
+  currentWaitingMidis.clear();
   sessionEvaluatedCount = 0;
   sessionHitCount = 0;
   sessionRhythmScoreSum = 0;
@@ -132,7 +143,7 @@ function updateAccuracyHUD(): void {
   }
 }
 
-// 2. Hardware Input
+// 2. Hardware Input & Strike-to-Advance Resolver
 midiInput
 .init()
 .then((devices) => {
@@ -149,39 +160,47 @@ midiInput.subscribe((note, _vel, isNoteOn) => {
     physicalPressedKeys.add(note);
 
     if (isPlaying) {
-      const tolerance = waitForNotes ? 0.25 : 0.14;
-      let matchedNote: NoteWithMeta | null = null;
-      let bestDelta = Infinity;
+      const maxLateWindow = waitForNotes ? 0.70 : 0.20;
 
+      // Check all notes sharing this pitch in the hit window
       for (const n of combinedNotes) {
         if (n.midi !== note || n.midi < 48 || n.midi > 72) continue;
-        const delta = Math.abs(currentTransportTime - n.time);
 
-        if (delta <= tolerance) {
-          if (!noteStruckMap.get(n.id) && delta < bestDelta) {
-            bestDelta = delta;
-            matchedNote = n;
+        const timeDiff = currentTransportTime - n.time;
+        const isEligible = timeDiff >= -EARLY_HIT_WINDOW && timeDiff <= maxLateWindow;
+
+        if (isEligible && !noteStruckMap.get(n.id)) {
+          // Permanently satisfy this note: never freezes again!
+          noteStruckMap.set(n.id, true);
+
+          // Clear from red waiting alert
+          currentWaitingNoteIds.delete(n.id);
+          currentWaitingMidis.delete(n.midi);
+
+          // Accuracy scoring
+          const absDelta = Math.abs(timeDiff);
+          let timingScore = 100;
+          if (absDelta <= 0.06) timingScore = 100;
+          else if (absDelta <= 0.12) timingScore = 85;
+          else if (absDelta <= 0.20) timingScore = 65;
+          else timingScore = 45;
+
+          const existing = noteEvalMap.get(n.id);
+          if (!existing || !existing.evaluated) {
+            sessionEvaluatedCount++;
+            sessionHitCount++;
+            sessionRhythmScoreSum += timingScore;
+            noteEvalMap.set(n.id, { evaluated: true, hit: true, timingScore });
+            updateAccuracyHUD();
           }
         }
       }
 
-      if (matchedNote) {
-        noteStruckMap.set(matchedNote.id, true);
-
-        let timingScore = 100;
-        if (bestDelta <= 0.04) timingScore = 100;
-        else if (bestDelta <= 0.08) timingScore = 80;
-        else if (bestDelta <= 0.12) timingScore = 60;
-        else timingScore = 40;
-
-        const existing = noteEvalMap.get(matchedNote.id);
-        if (!existing || !existing.evaluated) {
-          sessionEvaluatedCount++;
-          sessionHitCount++;
-          sessionRhythmScoreSum += timingScore;
-          noteEvalMap.set(matchedNote.id, { evaluated: true, hit: true, timingScore });
-          updateAccuracyHUD();
-        }
+      // If user hit the note while paused waiting, resume immediately!
+      if (isWaitingForInput && currentWaitingNoteIds.size === 0) {
+        isWaitingForInput = false;
+        lastFrameTimestamp = performance.now();
+        backingTrack.play(currentTransportTime);
       }
     }
   } else {
@@ -275,24 +294,28 @@ function rebuildCombinedNotes(): void {
       currentWaveform,
       currentOffsetSeconds,
       detectedOverlaps,
-      showNoteLabels
+      showNoteLabels,
+      currentWaitingNoteIds
     );
   }
 }
 
-// 6. Target Cues
+
+// 6. Target Cues & Red Waiting Key Indicators
 function updateTargetCues(time: number): void {
   const activeTargets = new Map<number, string>();
-  const leadIn = 0.03;
+  const leadIn = 0.04;
 
   for (const note of combinedNotes) {
     if (note.time > time + leadIn) break;
-    if (time >= note.time - leadIn && time <= note.time + note.duration) {
+    // Keep target active for the full duration of the note
+    const noteEnd = note.time + Math.max(note.duration, 0.25);
+    if (time >= note.time - leadIn && time <= noteEnd) {
       activeTargets.set(note.midi, note.color || '#38bdf8');
     }
   }
 
-  visualizer.setTargetNotes(activeTargets);
+  visualizer.setTargetNotes(activeTargets, currentWaitingMidis);
 }
 
 // 7. Loop Handlers
@@ -324,6 +347,8 @@ waitToggle.addEventListener('change', () => {
   waitForNotes = waitToggle.checked;
   if (!waitForNotes && isWaitingForInput) {
     isWaitingForInput = false;
+    currentWaitingNoteIds.clear();
+    currentWaitingMidis.clear();
     if (isPlaying) {
       lastFrameTimestamp = performance.now();
       backingTrack.play(currentTransportTime);
@@ -346,7 +371,8 @@ noteLabelToggle.addEventListener('change', () => {
       currentWaveform,
       currentOffsetSeconds,
       detectedOverlaps,
-      showNoteLabels
+      showNoteLabels,
+      currentWaitingNoteIds
     );
   }
 });
@@ -403,7 +429,6 @@ function updateSyncOffsetCalibration(): void {
 
   backingTrack.setOffsetMs(currentOffsetSeconds * 1000);
 
-  // Synchronously update waveforms across both the top minimap and vertical runway
   minimap.draw(combinedNotes, currentBarLines, loopState, currentWaveform, currentOffsetSeconds);
   if (!isPlaying) {
     renderer.draw(
@@ -413,12 +438,12 @@ function updateSyncOffsetCalibration(): void {
       currentWaveform,
       currentOffsetSeconds,
       detectedOverlaps,
-      showNoteLabels
+      showNoteLabels,
+      currentWaitingNoteIds
     );
   }
 }
 
-// Volume Controls
 audioVolume.addEventListener('input', () => {
   const vol = parseFloat(audioVolume.value);
   volumeLabel.innerText = `${Math.round(vol * 100)}%`;
@@ -431,7 +456,6 @@ volumeResetBtn.addEventListener('click', () => {
   backingTrack.setVolume(0.8);
 });
 
-// Coarse Sync Slider & Default Buttons
 coarseSyncSlider.addEventListener('input', () => {
   coarseOffsetSec = parseFloat(coarseSyncSlider.value);
   updateSyncOffsetCalibration();
@@ -446,7 +470,6 @@ function resetCoarseSync(): void {
 coarseResetBtn.addEventListener('click', resetCoarseSync);
 coarseSyncSlider.addEventListener('dblclick', resetCoarseSync);
 
-// Fine Sync Slider & Default Buttons
 fineSyncSlider.addEventListener('input', () => {
   fineOffsetMs = parseInt(fineSyncSlider.value, 10);
   updateSyncOffsetCalibration();
@@ -500,7 +523,8 @@ minimap.onSeek((targetTime) => {
       currentWaveform,
       currentOffsetSeconds,
       detectedOverlaps,
-      showNoteLabels
+      showNoteLabels,
+      currentWaitingNoteIds
     );
   }
 });
@@ -512,50 +536,74 @@ function seekTransport(time: number): void {
   updateTargetCues(currentTransportTime);
 }
 
-// 13. Practice Engine & Transport Loop
+// 13. Pure Strike-To-Advance Practice Engine
 function renderLoop() {
   const now = performance.now();
   const dt = (now - lastFrameTimestamp) / 1000;
   lastFrameTimestamp = now;
 
   if (isPlaying) {
+    // -------------------------------------------------------------
+    // PURE STRIKE-TO-ADVANCE ENGINE (NO SUSTAIN TRAPS)
+    // -------------------------------------------------------------
     if (waitForNotes) {
       let mustWait = false;
+      let pausePoint = currentTransportTime;
       const playable = combinedNotes.filter((n) => n.midi >= 48 && n.midi <= 72);
 
+      // Collect notes that have reached the hit line and need strikes
+      const missingNotes: NoteWithMeta[] = [];
+
       for (const n of playable) {
-        if (n.time > currentTransportTime + 0.015) break;
+        if (n.time > currentTransportTime + 0.01) break;
 
         if (!noteStruckMap.get(n.id)) {
-          mustWait = true;
-          currentTransportTime = n.time;
-          break;
-        }
-
-        if (n.duration > 0.16) {
-          const noteEnd = n.time + n.duration - 0.03;
-          if (currentTransportTime >= n.time && currentTransportTime < noteEnd) {
-            if (!physicalPressedKeys.has(n.midi)) {
-              mustWait = true;
-              break;
-            }
+          // If the player is ALREADY physically holding this key down, satisfy immediately!
+          if (physicalPressedKeys.has(n.midi)) {
+            noteStruckMap.set(n.id, true);
+            continue;
           }
+
+          // If still within late grace period, glide forward naturally
+          if (n.time + LATE_GRACE_WINDOW > currentTransportTime) {
+            continue;
+          }
+
+          // Exceeded grace window: player missed this strike!
+          missingNotes.push(n);
+          mustWait = true;
+          pausePoint = n.time + LATE_GRACE_WINDOW;
         }
       }
 
       if (mustWait) {
+        // Halt and populate RED waiting alerts on keys and blocks
+        currentTransportTime = pausePoint;
+        currentWaitingNoteIds.clear();
+        currentWaitingMidis.clear();
+
+        missingNotes.forEach((mn) => {
+          currentWaitingNoteIds.add(mn.id);
+          currentWaitingMidis.add(mn.midi);
+        });
+
         if (!isWaitingForInput) {
           isWaitingForInput = true;
           backingTrack.pause();
         }
       } else {
+        currentWaitingNoteIds.clear();
+        currentWaitingMidis.clear();
+
         if (isWaitingForInput) {
           isWaitingForInput = false;
+          lastFrameTimestamp = performance.now();
           backingTrack.play(currentTransportTime);
         }
       }
     }
 
+    // Transport Clock Advance
     if (!isWaitingForInput) {
       if (backingTrack.hasTrack()) {
         const audioTime = backingTrack.getCurrentTime();
@@ -569,10 +617,11 @@ function renderLoop() {
       }
     }
 
+    // Normal Mode Miss Evaluation
     if (!waitForNotes) {
       for (const n of combinedNotes) {
         if (n.midi < 48 || n.midi > 72) continue;
-        if (n.time < currentTransportTime - 0.15) {
+        if (n.time < currentTransportTime - 0.20) {
           const evalState = noteEvalMap.get(n.id);
           if (!evalState) {
             sessionEvaluatedCount++;
@@ -585,6 +634,7 @@ function renderLoop() {
       }
     }
 
+    // Loop Jump
     if (loopState.enabled && loopState.end > loopState.start) {
       if (currentTransportTime >= loopState.end) {
         seekTransport(loopState.start);
@@ -599,7 +649,8 @@ function renderLoop() {
       currentWaveform,
       currentOffsetSeconds,
       detectedOverlaps,
-      showNoteLabels
+      showNoteLabels,
+      currentWaitingNoteIds
     );
     minimap.setProgress(currentTransportTime);
 
@@ -657,7 +708,8 @@ function stopPlayback() {
     currentWaveform,
     currentOffsetSeconds,
     detectedOverlaps,
-    showNoteLabels
+    showNoteLabels,
+    currentWaitingNoteIds
   );
 }
 
@@ -835,7 +887,6 @@ stopBtn.disabled = false;
 autoFitBtn.disabled = false;
 
 updateLoopUI();
-updateSyncOffsetCalibration();
 rebuildCombinedNotes();
 stopPlayback();
 });

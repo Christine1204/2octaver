@@ -11,6 +11,8 @@
   --accent-glow: rgba(56, 189, 248, 0.25);
   --success-color: #22c55e;
   --success-glow: rgba(34, 197, 94, 0.25);
+  --alert-red: #ef4444;
+  --alert-red-glow: rgba(239, 68, 68, 0.5);
   --text-muted: #64748b;
   --text-secondary: #94a3b8;
   --text-main: #f8fafc;
@@ -130,7 +132,6 @@ font-family: var(--font-mono);
   transform: none;
 }
 
-/* Surface Control Card */
 .control-box {
   background: var(--bg-primary);
   padding: 8px 10px;
@@ -208,9 +209,6 @@ input[type="range"] {
   margin: 0;
 }
 
-/* ==========================================================================
- *  Buttons
- *  ========================================================================== */
 button {
   background: linear-gradient(180deg, #182238 0%, #121a2c 100%);
   color: var(--text-main);
@@ -370,9 +368,6 @@ flex: 0.8;
   color: var(--accent-color);
 }
 
-/* ==========================================================================
- *  Toggles & Practice Mode
- *  ========================================================================== */
 .toggle-stack {
   display: flex;
   flex-direction: column;
@@ -415,9 +410,6 @@ flex: 0.8;
   background: rgba(56, 189, 248, 0.14);
 }
 
-/* ==========================================================================
- *  Track Rows
- *  ========================================================================== */
 .track-list {
   display: flex;
   flex-direction: column;
@@ -812,6 +804,7 @@ box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.7);
   height: 4px;
   background: transparent;
   pointer-events: none;
+  transition: all 0.1s ease;
 }
 
 .key.target-active .target-pip {
@@ -826,24 +819,31 @@ box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.7);
   background: linear-gradient(180deg, #2e3b54 0%, #172136 100%);
 }
 
+/* User Pressed Key (Untargeted/Free-play: natural mechanical depression) */
 .key.user-active {
   transform: translateY(2px);
 }
 
 .key.white.user-active {
-  background: linear-gradient(180deg, #7dd3fc 0%, #0284c7 100%) !important;
-  box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.4) !important;
+  background: linear-gradient(180deg, #d1d5db 0%, #9ca3af 100%) !important;
+  box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.35) !important;
 }
 
 .key.black.user-active {
-  background: linear-gradient(180deg, #0284c7 0%, #0369a1 100%) !important;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5) !important;
+  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%) !important;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.7) !important;
+  border-color: #38bdf8 !important;
 }
 
 .key.user-active .key-label {
-  color: #032042 !important;
+  color: #111827 !important;
 }
 
+.key.black.user-active .key-label {
+  color: #94a3b8 !important;
+}
+
+/* Perfect Hit Confirmation (Correct note held: clean emerald green) */
 .key.user-active.target-active {
   transform: translateY(3px);
 }
@@ -856,9 +856,64 @@ box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.7);
 .key.black.user-active.target-active {
   background: linear-gradient(180deg, #22c55e 0%, #15803d 100%) !important;
   box-shadow: 0 0 14px var(--success-glow) !important;
+  border-color: #4ade80 !important;
+}
+
+.key.user-active.target-active .key-label {
+  color: #052e16 !important;
+}
+
+.key.black.user-active.target-active .key-label {
+  color: #dcfce7 !important;
 }
 
 .key.user-active.target-active .target-pip {
   background: #ffffff !important;
   height: 5px;
+}
+
+/* ==========================================================================
+ *  NEON RED "WAITING FOR INPUT" ALERT PULSE
+ *  ========================================================================== */
+@keyframes wait-key-pulse {
+  0% {
+    box-shadow: 0 0 8px var(--alert-red-glow), inset 0 0 6px var(--alert-red-glow);
+    border-color: #ef4444;
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(239, 68, 68, 0.9), inset 0 0 12px rgba(239, 68, 68, 0.6);
+    border-color: #f87171;
+  }
+  100% {
+    box-shadow: 0 0 8px var(--alert-red-glow), inset 0 0 6px var(--alert-red-glow);
+    border-color: #ef4444;
+  }
+}
+
+.key.waiting-active {
+  animation: wait-key-pulse 0.75s infinite ease-in-out !important;
+  z-index: 5 !important;
+}
+
+.key.white.waiting-active {
+  background: linear-gradient(180deg, #fee2e2 0%, #fecaca 70%, #f87171 100%) !important;
+}
+
+.key.black.waiting-active {
+  background: linear-gradient(180deg, #7f1d1d 0%, #450a0a 100%) !important;
+}
+
+.key.waiting-active .target-pip {
+  background: #ef4444 !important;
+  height: 6px !important;
+  box-shadow: 0 0 12px #ef4444 !important;
+}
+
+.key.waiting-active .key-label {
+  color: #991b1b !important;
+  font-weight: 900 !important;
+}
+
+.key.black.waiting-active .key-label {
+  color: #fecaca !important;
 }

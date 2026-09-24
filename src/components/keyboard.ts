@@ -9,6 +9,7 @@ export class KeyboardVisualizer {
 
     private userActiveNotes = new Set<number>();
     private currentTargets = new Map<number, string>();
+    private currentWaiting = new Set<number>();
     private showLabels = true;
 
     constructor(containerId: string) {
@@ -31,33 +32,45 @@ export class KeyboardVisualizer {
         }
     }
 
-    public setTargetNotes(newTargets: Map<number, string>): void {
+    public setTargetNotes(newTargets: Map<number, string>, waitingMidis: Set<number> = new Set()): void {
+        // Clear old targets
         for (const [note] of this.currentTargets) {
             if (!newTargets.has(note)) {
                 const keyEl = this.container.querySelector(`[data-note="${note}"]`) as HTMLElement | null;
                 if (keyEl) {
-                    keyEl.classList.remove('target-active');
+                    keyEl.classList.remove('target-active', 'waiting-active');
                     keyEl.style.removeProperty('--cue-color');
                 }
             }
         }
 
+        // Apply new targets
         for (const [note, color] of newTargets) {
-            const prevColor = this.currentTargets.get(note);
-            if (prevColor !== color) {
+            const keyEl = this.container.querySelector(`[data-note="${note}"]`) as HTMLElement | null;
+            if (keyEl) {
+                keyEl.classList.add('target-active');
+                keyEl.style.setProperty('--cue-color', color);
+            }
+        }
+
+        // Apply or remove pulsing red alert for waiting notes
+        for (let note = this.startNote; note < this.startNote + this.numKeys; note++) {
+            const isWaiting = waitingMidis.has(note);
+            const wasWaiting = this.currentWaiting.has(note);
+            if (isWaiting !== wasWaiting) {
                 const keyEl = this.container.querySelector(`[data-note="${note}"]`) as HTMLElement | null;
                 if (keyEl) {
-                    keyEl.classList.add('target-active');
-                    keyEl.style.setProperty('--cue-color', color);
+                    keyEl.classList.toggle('waiting-active', isWaiting);
                 }
             }
         }
 
         this.currentTargets = new Map(newTargets);
+        this.currentWaiting = new Set(waitingMidis);
     }
 
     public clearTargets(): void {
-        this.setTargetNotes(new Map());
+        this.setTargetNotes(new Map(), new Set());
     }
 
     public setShowLabels(enabled: boolean): void {
@@ -101,7 +114,6 @@ export class KeyboardVisualizer {
             pip.className = 'target-pip';
             key.appendChild(pip);
 
-            // Label (C root with octave number, others with pitch class)
             const label = document.createElement('span');
             label.className = 'key-label';
             if (isC) {

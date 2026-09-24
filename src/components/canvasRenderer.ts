@@ -23,7 +23,6 @@ export class NoteRenderer {
     private playableEnd = 72;   // C5
     private pixelsPerSecond = 200;
 
-    // Visual breathing room above the physical keyboard border
     private readonly hitLineBuffer = 8;
 
     constructor(canvasId: string) {
@@ -75,7 +74,8 @@ export class NoteRenderer {
         waveform: WaveformData | null = null,
         syncOffsetSeconds = 0,
         overlaps: NoteOverlap[] = [],
-        showNoteLabels = true
+        showNoteLabels = true,
+        waitingNoteIds: Set<number> = new Set()
     ): void {
         const rect = this.canvas.getBoundingClientRect();
         const hitLineY = rect.height - this.hitLineBuffer;
@@ -189,7 +189,10 @@ export class NoteRenderer {
             const w = geom.width - 3;
 
             const isPlayable = note.midi >= this.playableStart && note.midi <= this.playableEnd;
-            const baseColor = note.color || '#38bdf8';
+            const isBlack = [1, 3, 6, 8, 10].includes(note.midi % 12);
+            const isWaiting = waitingNoteIds.has(note.id);
+
+            const baseColor = isWaiting ? '#ef4444' : (note.color || '#38bdf8');
 
             this.ctx.save();
             this.ctx.beginPath();
@@ -204,13 +207,32 @@ export class NoteRenderer {
 
             // Top gloss highlight
             if (isPlayable && noteHeight > 10) {
-                this.ctx.fillStyle = 'rgba(255, 255, 255, 0.28)';
+                this.ctx.fillStyle = isWaiting ? 'rgba(255, 255, 255, 0.45)' : 'rgba(255, 255, 255, 0.28)';
                 this.ctx.fillRect(x + 1, noteY + 1, w - 2, 3);
             }
 
-            // Crisp border
-            this.ctx.strokeStyle = isPlayable ? '#ffffff' : 'rgba(255, 255, 255, 0.35)';
-            this.ctx.lineWidth = 1.5;
+            // Border: Pulsing red when waiting, dark charcoal for black keys, crisp white for white keys
+            if (isWaiting) {
+                this.ctx.strokeStyle = '#ffffff';
+                this.ctx.lineWidth = 2.5;
+                this.ctx.shadowColor = '#ef4444';
+                this.ctx.shadowBlur = 10;
+            } else if (!isPlayable) {
+                this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+                this.ctx.lineWidth = 1;
+                this.ctx.shadowBlur = 0;
+            } else if (isBlack) {
+                // High-contrast dark charcoal outline for accidental/black keys
+                this.ctx.strokeStyle = '#0b0f19';
+                this.ctx.lineWidth = 2;
+                this.ctx.shadowBlur = 0;
+            } else {
+                // Crisp white outline for natural/white keys
+                this.ctx.strokeStyle = '#ffffff';
+                this.ctx.lineWidth = 1.5;
+                this.ctx.shadowBlur = 0;
+            }
+
             this.ctx.stroke();
             this.ctx.restore();
         }
@@ -275,6 +297,7 @@ export class NoteRenderer {
                 const isPlayable = note.midi >= this.playableStart && note.midi <= this.playableEnd;
                 if (!isPlayable) continue;
 
+                const isWaiting = waitingNoteIds.has(note.id);
                 const noteHeight = Math.max(note.duration * this.pixelsPerSecond, 8);
                 const noteY = hitLineY - timeUntilHit * this.pixelsPerSecond - noteHeight;
                 const x = geom.x + 1.5;
@@ -289,7 +312,7 @@ export class NoteRenderer {
                 const pillX = textX - pillWidth / 2;
                 const pillY = textY - pillHeight / 2;
 
-                this.ctx.fillStyle = 'rgba(6, 10, 18, 0.88)';
+                this.ctx.fillStyle = isWaiting ? '#b91c1c' : 'rgba(6, 10, 18, 0.88)';
                 this.ctx.beginPath();
                 if ((this.ctx as any).roundRect) {
                     (this.ctx as any).roundRect(pillX, pillY, pillWidth, pillHeight, 3);
@@ -305,11 +328,9 @@ export class NoteRenderer {
         }
 
         // 7. Hit-Line Threshold with Buffer Clearance
-        // Subtle runway shadow in the buffer zone
         this.ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
         this.ctx.fillRect(0, hitLineY, rect.width, this.hitLineBuffer);
 
-        // Strike beam across active 2 octaves
         this.ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
         this.ctx.lineWidth = 1.5;
         this.ctx.beginPath();
@@ -319,7 +340,7 @@ export class NoteRenderer {
         this.ctx.lineTo(rect.width, hitLineY);
         this.ctx.stroke();
 
-        this.ctx.strokeStyle = '#38bdf8';
+        this.ctx.strokeStyle = waitingNoteIds.size > 0 ? '#ef4444' : '#38bdf8';
         this.ctx.lineWidth = 2;
         this.ctx.beginPath();
         this.ctx.moveTo(leftInactiveWidth, hitLineY);
