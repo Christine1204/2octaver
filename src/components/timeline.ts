@@ -90,7 +90,6 @@ export class TimelineMinimap {
         this.container.classList.toggle('loop-active', loop.enabled);
     }
 
-    // Magnetic Snapping Calculation (±14px radius around bar lines)
     private snapToBar(time: number, pixelRadius = 14): { time: number; snapped: boolean } {
         if (this.barLines.length === 0) return { time, snapped: false };
 
@@ -131,7 +130,8 @@ export class TimelineMinimap {
         notes: (ParsedNote & { color?: string })[],
                 barLines: BarLine[] = [],
                 loop: LoopRegion | null = null,
-                waveform: WaveformData | null = null
+                waveform: WaveformData | null = null,
+                syncOffsetSeconds = 0
     ): void {
         const rect = this.canvas.getBoundingClientRect();
         if (rect.width === 0 || rect.height === 0) return;
@@ -148,7 +148,7 @@ export class TimelineMinimap {
         this.ctx.fillStyle = 'rgba(56, 189, 248, 0.05)';
         this.ctx.fillRect(0, yC5, rect.width, yC3 - yC5);
 
-        // 2. Full-Song Horizontal Audio Waveform
+        // 2. Full Audio Waveform (Shifted by Sync Offset)
         if (waveform && waveform.peaks.length > 0) {
             const centerY = rect.height / 2;
             const maxHalfHeight = (rect.height / 2) * 0.88;
@@ -161,11 +161,21 @@ export class TimelineMinimap {
             for (let px = 0; px < totalWidth; px++) {
                 const tStart = (px / totalWidth) * this.duration;
                 const tEnd = ((px + 1) / totalWidth) * this.duration;
-                const idxStart = Math.floor(tStart * waveform.peaksPerSecond);
-                const idxEnd = Math.min(Math.ceil(tEnd * waveform.peaksPerSecond), totalPeaks);
+
+                // Shift audio sampling time by current offset
+                const audioStart = tStart + syncOffsetSeconds;
+                const audioEnd = tEnd + syncOffsetSeconds;
+
+                const idxStart = Math.floor(audioStart * waveform.peaksPerSecond);
+                const idxEnd = Math.ceil(audioEnd * waveform.peaksPerSecond);
+
+                if (idxEnd <= 0 || idxStart >= totalPeaks) continue;
 
                 let maxAmp = 0;
-                for (let i = idxStart; i <= idxEnd && i < totalPeaks; i++) {
+                const start = Math.max(0, idxStart);
+                const end = Math.min(idxEnd, totalPeaks);
+
+                for (let i = start; i < end; i++) {
                     if (samples[i] > maxAmp) maxAmp = samples[i];
                 }
 
@@ -212,7 +222,7 @@ export class TimelineMinimap {
             this.ctx.fillRect(x, Math.max(y - 1.5, 0), w, 3);
         }
 
-        // 6. Active Loop Shading Region between Bar A and Bar B
+        // 6. Active Loop Shading Region
         if (loop && loop.end > loop.start) {
             const xA = (loop.start / this.duration) * rect.width;
             const xB = (loop.end / this.duration) * rect.width;
@@ -266,19 +276,16 @@ export class TimelineMinimap {
             }
         };
 
-        // Grab Marker A
         this.markerA.addEventListener('mousedown', (e) => {
             e.stopPropagation();
             activeDrag = 'markerA';
         });
 
-        // Grab Marker B
         this.markerB.addEventListener('mousedown', (e) => {
             e.stopPropagation();
             activeDrag = 'markerB';
         });
 
-        // Double-click either marker to toggle loop mode
         this.markerA.addEventListener('dblclick', (e) => {
             e.stopPropagation();
             this.onToggleLoopCallback?.();
@@ -289,7 +296,6 @@ export class TimelineMinimap {
             this.onToggleLoopCallback?.();
         });
 
-        // Scrub playhead when clicking empty space
         this.container.addEventListener('mousedown', (e) => {
             if ((e.target as HTMLElement).closest('.loop-slider-marker')) return;
             activeDrag = 'seek';

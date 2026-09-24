@@ -17,23 +17,32 @@ const fileInput = document.getElementById('midi-upload') as HTMLInputElement;
 const audioInput = document.getElementById('audio-upload') as HTMLInputElement;
 const audioStatus = document.getElementById('audio-status') as HTMLDivElement;
 const audioVolume = document.getElementById('audio-volume') as HTMLInputElement;
-const syncOffset = document.getElementById('sync-offset') as HTMLInputElement;
-const offsetLabel = document.getElementById('offset-label') as HTMLSpanElement;
+const volumeLabel = document.getElementById('volume-label') as HTMLSpanElement;
+const volumeResetBtn = document.getElementById('volume-reset-btn') as HTMLButtonElement;
+
+// Dual Sync Delay Sliders & Default Buttons
+const coarseSyncSlider = document.getElementById('coarse-sync-slider') as HTMLInputElement;
+const coarseVal = document.getElementById('coarse-val') as HTMLSpanElement;
+const coarseResetBtn = document.getElementById('coarse-reset-btn') as HTMLButtonElement;
+
+const fineSyncSlider = document.getElementById('fine-sync-slider') as HTMLInputElement;
+const fineVal = document.getElementById('fine-val') as HTMLSpanElement;
+const fineResetBtn = document.getElementById('fine-reset-btn') as HTMLButtonElement;
 
 const trackListEl = document.getElementById('track-list') as HTMLDivElement;
 const playBtn = document.getElementById('play-btn') as HTMLButtonElement;
 const stopBtn = document.getElementById('stop-btn') as HTMLButtonElement;
 const loopBtn = document.getElementById('loop-btn') as HTMLButtonElement;
-const deviceInfo = document.getElementById('device-info') as HTMLDivElement;
-const octDownBtn = document.getElementById('oct-down-btn') as HTMLButtonElement;
-const octUpBtn = document.getElementById('oct-up-btn') as HTMLButtonElement;
 const autoFitBtn = document.getElementById('auto-fit-btn') as HTMLButtonElement;
-const transposeLabel = document.getElementById('transpose-label') as HTMLSpanElement;
+const deviceInfo = document.getElementById('device-info') as HTMLDivElement;
 
-// Toggles
+// Toggles & Live Accuracy HUD
+const waitToggle = document.getElementById('wait-toggle') as HTMLInputElement;
 const foldToggle = document.getElementById('fold-toggle') as HTMLInputElement;
 const noteLabelToggle = document.getElementById('note-label-toggle') as HTMLInputElement;
 const keyLabelToggle = document.getElementById('key-label-toggle') as HTMLInputElement;
+const pitchAccVal = document.getElementById('pitch-acc-val') as HTMLSpanElement;
+const rhythmAccVal = document.getElementById('rhythm-acc-val') as HTMLSpanElement;
 
 const speedSlider = document.getElementById('speed-slider') as HTMLInputElement;
 const speedLabel = document.getElementById('speed-label') as HTMLSpanElement;
@@ -50,16 +59,36 @@ const backingTrack = new BackingTrackPlayer();
 let currentSong: ParsedSong | null = null;
 let currentBarLines: BarLine[] = [];
 let currentWaveform: WaveformData | null = null;
+
+// Two-tier sync delay state
+let coarseOffsetSec = 0;
+let fineOffsetMs = 0;
 let currentOffsetSeconds = 0;
 
 const selectedTrackIds = new Set<number>();
 const trackOctaveShifts = new Map<number, number>();
-let globalTranspose = 0;
 let foldTo2Octaves = true;
 let showNoteLabels = true;
+let waitForNotes = false;
 
 let combinedNotes: NoteWithMeta[] = [];
 let detectedOverlaps: NoteOverlap[] = [];
+
+// Physical pressed keys on MIDI keyboard
+const physicalPressedKeys = new Set<number>();
+const noteStruckMap = new Map<number, boolean>();
+let isWaitingForInput = false;
+
+// Live Session Accuracy State
+interface NoteEvaluation {
+  evaluated: boolean;
+  hit: boolean;
+  timingScore: number;
+}
+const noteEvalMap = new Map<number, NoteEvaluation>();
+let sessionEvaluatedCount = 0;
+let sessionHitCount = 0;
+let sessionRhythmScoreSum = 0;
 
 // Loop State
 const loopState: LoopRegion = {
@@ -74,7 +103,36 @@ let playbackSpeed = 1.0;
 let currentTransportTime = 0;
 let lastFrameTimestamp = performance.now();
 
-// 1. Hardware Input
+// 1. Accuracy Metric Engine
+function resetSessionAccuracy(): void {
+  noteEvalMap.clear();
+  noteStruckMap.clear();
+  sessionEvaluatedCount = 0;
+  sessionHitCount = 0;
+  sessionRhythmScoreSum = 0;
+  pitchAccVal.innerText = '--%';
+  rhythmAccVal.innerText = '--%';
+}
+
+function updateAccuracyHUD(): void {
+  if (sessionEvaluatedCount === 0) {
+    pitchAccVal.innerText = '--%';
+    rhythmAccVal.innerText = '--%';
+    return;
+  }
+
+  const pitchPct = Math.round((sessionHitCount / sessionEvaluatedCount) * 100);
+  pitchAccVal.innerText = `${pitchPct}%`;
+
+  if (sessionHitCount > 0) {
+    const rhythmPct = Math.round(sessionRhythmScoreSum / sessionHitCount);
+    rhythmAccVal.innerText = `${rhythmPct}%`;
+  } else {
+    rhythmAccVal.innerText = '0%';
+  }
+}
+
+// 2. Hardware Input
 midiInput
 .init()
 .then((devices) => {
@@ -86,9 +144,52 @@ midiInput
 
 midiInput.subscribe((note, _vel, isNoteOn) => {
   visualizer.setUserNoteState(note, isNoteOn);
+
+  if (isNoteOn) {
+    physicalPressedKeys.add(note);
+
+    if (isPlaying) {
+      const tolerance = waitForNotes ? 0.25 : 0.14;
+      let matchedNote: NoteWithMeta | null = null;
+      let bestDelta = Infinity;
+
+      for (const n of combinedNotes) {
+        if (n.midi !== note || n.midi < 48 || n.midi > 72) continue;
+        const delta = Math.abs(currentTransportTime - n.time);
+
+        if (delta <= tolerance) {
+          if (!noteStruckMap.get(n.id) && delta < bestDelta) {
+            bestDelta = delta;
+            matchedNote = n;
+          }
+        }
+      }
+
+      if (matchedNote) {
+        noteStruckMap.set(matchedNote.id, true);
+
+        let timingScore = 100;
+        if (bestDelta <= 0.04) timingScore = 100;
+        else if (bestDelta <= 0.08) timingScore = 80;
+        else if (bestDelta <= 0.12) timingScore = 60;
+        else timingScore = 40;
+
+        const existing = noteEvalMap.get(matchedNote.id);
+        if (!existing || !existing.evaluated) {
+          sessionEvaluatedCount++;
+          sessionHitCount++;
+          sessionRhythmScoreSum += timingScore;
+          noteEvalMap.set(matchedNote.id, { evaluated: true, hit: true, timingScore });
+          updateAccuracyHUD();
+        }
+      }
+    }
+  } else {
+    physicalPressedKeys.delete(note);
+  }
 });
 
-// 2. Pitch Class Folding
+// 3. Pitch Class Folding
 function foldPitchToRange(pitch: number, min = 48, max = 72): number {
   let folded = pitch;
   while (folded < min) folded += 12;
@@ -96,7 +197,7 @@ function foldPitchToRange(pitch: number, min = 48, max = 72): number {
   return folded;
 }
 
-// 3. Multi-Track Overlap Calculator
+// 4. Overlap Hazard Detection
 function computeNoteOverlaps(notes: NoteWithMeta[]): NoteOverlap[] {
   const notesByPitch = new Map<number, NoteWithMeta[]>();
   for (const n of notes) {
@@ -136,7 +237,7 @@ function computeNoteOverlaps(notes: NoteWithMeta[]): NoteOverlap[] {
   return overlaps;
 }
 
-// 4. Multi-Track Combiner
+// 5. Multi-Track Combiner
 function rebuildCombinedNotes(): void {
   if (!currentSong) {
     combinedNotes = [];
@@ -149,10 +250,9 @@ function rebuildCombinedNotes(): void {
   combinedNotes = activeTracks.flatMap((track) => {
     const color = TRACK_PALETTE[track.id % TRACK_PALETTE.length];
     const trackShift = trackOctaveShifts.get(track.id) ?? 0;
-    const totalShift = trackShift + globalTranspose;
 
     return track.notes.map((n) => {
-      let finalPitch = n.midi + totalShift;
+      let finalPitch = n.midi + trackShift;
       if (foldTo2Octaves && !track.isDrum) {
         finalPitch = foldPitchToRange(finalPitch, 48, 72);
       }
@@ -163,7 +263,7 @@ function rebuildCombinedNotes(): void {
   combinedNotes.sort((a, b) => a.time - b.time);
   detectedOverlaps = computeNoteOverlaps(combinedNotes);
 
-  minimap.draw(combinedNotes, currentBarLines, loopState, currentWaveform);
+  minimap.draw(combinedNotes, currentBarLines, loopState, currentWaveform, currentOffsetSeconds);
   minimap.updateLoopMarkers(loopState);
 
   if (!isPlaying) {
@@ -180,7 +280,7 @@ function rebuildCombinedNotes(): void {
   }
 }
 
-// 5. Target Cues
+// 6. Target Cues
 function updateTargetCues(time: number): void {
   const activeTargets = new Map<number, string>();
   const leadIn = 0.03;
@@ -195,11 +295,11 @@ function updateTargetCues(time: number): void {
   visualizer.setTargetNotes(activeTargets);
 }
 
-// 6. Loop Mode Controls
+// 7. Loop Handlers
 function updateLoopUI(): void {
   loopBtn.classList.toggle('active', loopState.enabled);
   minimap.updateLoopMarkers(loopState);
-  minimap.draw(combinedNotes, currentBarLines, loopState, currentWaveform);
+  minimap.draw(combinedNotes, currentBarLines, loopState, currentWaveform, currentOffsetSeconds);
 }
 
 function toggleLoop(): void {
@@ -208,61 +308,28 @@ function toggleLoop(): void {
 }
 
 loopBtn.addEventListener('click', toggleLoop);
+minimap.onToggleLoop(() => toggleLoop());
 
-// Double-clicking either Marker A or B toggles loop
-minimap.onToggleLoop(() => {
-  toggleLoop();
-});
-
-// Dragging Marker A or B only repositions boundaries without force-activating loop mode
 minimap.onLoopChange((newA, newB) => {
   const songDur = currentSong?.duration || 100;
-
-  if (newA >= 0) {
-    loopState.start = Math.max(0, Math.min(newA, loopState.end - 0.2));
-  }
-  if (newB >= 0) {
-    loopState.end = Math.min(songDur, Math.max(newB, loopState.start + 0.2));
-  }
+  if (newA >= 0) loopState.start = Math.max(0, Math.min(newA, loopState.end - 0.2));
+  if (newB >= 0) loopState.end = Math.min(songDur, Math.max(newB, loopState.start + 0.2));
 
   minimap.updateLoopMarkers(loopState);
-  minimap.draw(combinedNotes, currentBarLines, loopState, currentWaveform);
+  minimap.draw(combinedNotes, currentBarLines, loopState, currentWaveform, currentOffsetSeconds);
 });
 
-// 7. Speed Controls
-function setPlaybackSpeed(speed: number): void {
-  playbackSpeed = Math.round(speed * 100) / 100;
-  speedSlider.value = playbackSpeed.toString();
-  speedLabel.innerText = `${playbackSpeed.toFixed(2)}×`;
-
-  backingTrack.setPlaybackRate(playbackSpeed);
-
-  presetButtons.forEach((btn) => {
-    const btnSpeed = parseFloat(btn.dataset.speed || '1.0');
-    btn.classList.toggle('active', Math.abs(btnSpeed - playbackSpeed) < 0.02);
-  });
-}
-
-speedSlider.addEventListener('input', () => {
-  setPlaybackSpeed(parseFloat(speedSlider.value));
+// 8. Practice Mode & Display Toggles
+waitToggle.addEventListener('change', () => {
+  waitForNotes = waitToggle.checked;
+  if (!waitForNotes && isWaitingForInput) {
+    isWaitingForInput = false;
+    if (isPlaying) {
+      lastFrameTimestamp = performance.now();
+      backingTrack.play(currentTransportTime);
+    }
+  }
 });
-
-presetButtons.forEach((btn) => {
-  btn.addEventListener('click', () => {
-    setPlaybackSpeed(parseFloat(btn.dataset.speed || '1.0'));
-  });
-});
-
-// 8. Transpose & Feature Toggles
-function updateGlobalTranspose(shift: number): void {
-  globalTranspose = shift;
-  const sign = globalTranspose > 0 ? '+' : '';
-  transposeLabel.innerText = `${sign}${globalTranspose} st`;
-  rebuildCombinedNotes();
-}
-
-octDownBtn.addEventListener('click', () => updateGlobalTranspose(globalTranspose - 12));
-octUpBtn.addEventListener('click', () => updateGlobalTranspose(globalTranspose + 12));
 
 foldToggle.addEventListener('change', () => {
   foldTo2Octaves = foldToggle.checked;
@@ -290,22 +357,111 @@ keyLabelToggle.addEventListener('change', () => {
 
 autoFitBtn.addEventListener('click', () => {
   if (!currentSong) return;
-  globalTranspose = 0;
-  transposeLabel.innerText = '+0 st';
 
-currentSong.tracks.forEach((track) => {
-  trackOctaveShifts.set(track.id, track.defaultOctaveShift);
-  const label = document.getElementById(`track-shift-${track.id}`);
-  if (label) {
-    const sign = track.defaultOctaveShift > 0 ? '+' : '';
-    label.innerText = `${sign}${track.defaultOctaveShift}`;
+  currentSong.tracks.forEach((track) => {
+    trackOctaveShifts.set(track.id, track.defaultOctaveShift);
+    const label = document.getElementById(`track-shift-${track.id}`);
+    if (label) {
+      const sign = track.defaultOctaveShift > 0 ? '+' : '';
+      label.innerText = `${sign}${track.defaultOctaveShift}`;
+    }
+  });
+
+  rebuildCombinedNotes();
+});
+
+// 9. Speed Controls
+function setPlaybackSpeed(speed: number): void {
+  playbackSpeed = Math.round(speed * 100) / 100;
+  speedSlider.value = playbackSpeed.toString();
+  speedLabel.innerText = `${playbackSpeed.toFixed(2)}×`;
+
+  backingTrack.setPlaybackRate(playbackSpeed);
+
+  presetButtons.forEach((btn) => {
+    const btnSpeed = parseFloat(btn.dataset.speed || '1.0');
+    btn.classList.toggle('active', Math.abs(btnSpeed - playbackSpeed) < 0.02);
+  });
+}
+
+speedSlider.addEventListener('input', () => {
+  setPlaybackSpeed(parseFloat(speedSlider.value));
+});
+
+presetButtons.forEach((btn) => {
+  btn.addEventListener('click', () => {
+    setPlaybackSpeed(parseFloat(btn.dataset.speed || '1.0'));
+  });
+});
+
+// 10. Volume & Two-Tier Sync Delay Calibration
+function updateSyncOffsetCalibration(): void {
+  currentOffsetSeconds = coarseOffsetSec + fineOffsetMs / 1000;
+
+  coarseVal.innerText = `${coarseOffsetSec > 0 ? '+' : ''}${coarseOffsetSec.toFixed(1)}s`;
+  fineVal.innerText = `${fineOffsetMs > 0 ? '+' : ''}${fineOffsetMs}ms`;
+
+  backingTrack.setOffsetMs(currentOffsetSeconds * 1000);
+
+  // Synchronously update waveforms across both the top minimap and vertical runway
+  minimap.draw(combinedNotes, currentBarLines, loopState, currentWaveform, currentOffsetSeconds);
+  if (!isPlaying) {
+    renderer.draw(
+      currentTransportTime,
+      combinedNotes,
+      currentBarLines,
+      currentWaveform,
+      currentOffsetSeconds,
+      detectedOverlaps,
+      showNoteLabels
+    );
   }
+}
+
+// Volume Controls
+audioVolume.addEventListener('input', () => {
+  const vol = parseFloat(audioVolume.value);
+  volumeLabel.innerText = `${Math.round(vol * 100)}%`;
+  backingTrack.setVolume(vol);
 });
 
-rebuildCombinedNotes();
+volumeResetBtn.addEventListener('click', () => {
+  audioVolume.value = '0.8';
+  volumeLabel.innerText = '80%';
+  backingTrack.setVolume(0.8);
 });
 
-// 9. Backing Track Handlers & Waveform Ingestion
+// Coarse Sync Slider & Default Buttons
+coarseSyncSlider.addEventListener('input', () => {
+  coarseOffsetSec = parseFloat(coarseSyncSlider.value);
+  updateSyncOffsetCalibration();
+});
+
+function resetCoarseSync(): void {
+  coarseOffsetSec = 0;
+  coarseSyncSlider.value = '0';
+  updateSyncOffsetCalibration();
+}
+
+coarseResetBtn.addEventListener('click', resetCoarseSync);
+coarseSyncSlider.addEventListener('dblclick', resetCoarseSync);
+
+// Fine Sync Slider & Default Buttons
+fineSyncSlider.addEventListener('input', () => {
+  fineOffsetMs = parseInt(fineSyncSlider.value, 10);
+  updateSyncOffsetCalibration();
+});
+
+function resetFineSync(): void {
+  fineOffsetMs = 0;
+  fineSyncSlider.value = '0';
+  updateSyncOffsetCalibration();
+}
+
+fineResetBtn.addEventListener('click', resetFineSync);
+fineSyncSlider.addEventListener('dblclick', resetFineSync);
+
+// 11. Audio File Loading
 audioInput.addEventListener('change', async (e) => {
   const file = (e.target as HTMLInputElement).files?.[0];
   if (!file) return;
@@ -321,18 +477,7 @@ try {
   audioStatus.innerText = `Ready: ${file.name.slice(0, 18)}...`;
   audioStatus.style.color = '#38bdf8';
 
-  minimap.draw(combinedNotes, currentBarLines, loopState, currentWaveform);
-  if (!isPlaying) {
-    renderer.draw(
-      currentTransportTime,
-      combinedNotes,
-      currentBarLines,
-      currentWaveform,
-      currentOffsetSeconds,
-      detectedOverlaps,
-      showNoteLabels
-    );
-  }
+  updateSyncOffsetCalibration();
 } catch (err) {
   console.error(err);
   audioStatus.innerText = 'Error loading audio file';
@@ -340,33 +485,11 @@ try {
 }
 });
 
-audioVolume.addEventListener('input', () => {
-  backingTrack.setVolume(parseFloat(audioVolume.value));
-});
-
-syncOffset.addEventListener('input', () => {
-  const ms = parseInt(syncOffset.value, 10);
-  currentOffsetSeconds = ms / 1000;
-  offsetLabel.innerText = `${ms > 0 ? '+' : ''}${ms}ms`;
-  backingTrack.setOffsetMs(ms);
-
-  if (!isPlaying) {
-    renderer.draw(
-      currentTransportTime,
-      combinedNotes,
-      currentBarLines,
-      currentWaveform,
-      currentOffsetSeconds,
-      detectedOverlaps,
-      showNoteLabels
-    );
-  }
-});
-
-// 10. Scrubbing & Master Transport Loop
+// 12. Scrubbing & Seek
 minimap.onSeek((targetTime) => {
   currentTransportTime = targetTime;
   backingTrack.seek(targetTime);
+  resetSessionAccuracy();
   updateTargetCues(currentTransportTime);
 
   if (!isPlaying) {
@@ -389,21 +512,77 @@ function seekTransport(time: number): void {
   updateTargetCues(currentTransportTime);
 }
 
+// 13. Practice Engine & Transport Loop
 function renderLoop() {
   const now = performance.now();
   const dt = (now - lastFrameTimestamp) / 1000;
   lastFrameTimestamp = now;
 
   if (isPlaying) {
-    if (backingTrack.hasTrack()) {
-      const audioTime = backingTrack.getCurrentTime();
-      if (audioTime !== null) {
-        currentTransportTime = audioTime;
+    if (waitForNotes) {
+      let mustWait = false;
+      const playable = combinedNotes.filter((n) => n.midi >= 48 && n.midi <= 72);
+
+      for (const n of playable) {
+        if (n.time > currentTransportTime + 0.015) break;
+
+        if (!noteStruckMap.get(n.id)) {
+          mustWait = true;
+          currentTransportTime = n.time;
+          break;
+        }
+
+        if (n.duration > 0.16) {
+          const noteEnd = n.time + n.duration - 0.03;
+          if (currentTransportTime >= n.time && currentTransportTime < noteEnd) {
+            if (!physicalPressedKeys.has(n.midi)) {
+              mustWait = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (mustWait) {
+        if (!isWaitingForInput) {
+          isWaitingForInput = true;
+          backingTrack.pause();
+        }
+      } else {
+        if (isWaitingForInput) {
+          isWaitingForInput = false;
+          backingTrack.play(currentTransportTime);
+        }
+      }
+    }
+
+    if (!isWaitingForInput) {
+      if (backingTrack.hasTrack()) {
+        const audioTime = backingTrack.getCurrentTime();
+        if (audioTime !== null) {
+          currentTransportTime = audioTime;
+        } else {
+          currentTransportTime += dt * playbackSpeed;
+        }
       } else {
         currentTransportTime += dt * playbackSpeed;
       }
-    } else {
-      currentTransportTime += dt * playbackSpeed;
+    }
+
+    if (!waitForNotes) {
+      for (const n of combinedNotes) {
+        if (n.midi < 48 || n.midi > 72) continue;
+        if (n.time < currentTransportTime - 0.15) {
+          const evalState = noteEvalMap.get(n.id);
+          if (!evalState) {
+            sessionEvaluatedCount++;
+            noteEvalMap.set(n.id, { evaluated: true, hit: false, timingScore: 0 });
+            updateAccuracyHUD();
+          }
+        } else {
+          break;
+        }
+      }
     }
 
     if (loopState.enabled && loopState.end > loopState.start) {
@@ -432,9 +611,12 @@ function renderLoop() {
 }
 requestAnimationFrame(renderLoop);
 
+// 14. Playback Controls
 function startPlayback() {
   if (combinedNotes.length === 0) return;
   isPlaying = true;
+  isWaitingForInput = false;
+  resetSessionAccuracy();
 
   if (loopState.enabled && loopState.end > loopState.start) {
     if (currentTransportTime < loopState.start || currentTransportTime >= loopState.end) {
@@ -450,12 +632,15 @@ function startPlayback() {
 function pausePlayback() {
   if (!isPlaying) return;
   isPlaying = false;
+  isWaitingForInput = false;
   backingTrack.pause();
   playBtn.innerText = 'Resume (Space)';
+  resetSessionAccuracy();
 }
 
 function stopPlayback() {
   isPlaying = false;
+  isWaitingForInput = false;
   currentTransportTime = loopState.enabled && loopState.end > loopState.start ? loopState.start : 0;
   backingTrack.stop();
   if (currentTransportTime > 0) backingTrack.seek(currentTransportTime);
@@ -463,6 +648,8 @@ function stopPlayback() {
   playBtn.innerText = 'Play (Space)';
   minimap.setProgress(currentTransportTime);
   visualizer.clearTargets();
+  resetSessionAccuracy();
+
   renderer.draw(
     currentTransportTime,
     combinedNotes,
@@ -516,7 +703,7 @@ function formatTrackInfo(rawName: string, noteCount: number, isDrum: boolean) {
   return { title, subtitle };
 }
 
-// 11. MIDI File Upload
+// 15. MIDI File Ingestion
 fileInput.addEventListener('change', async (event) => {
   const file = (event.target as HTMLInputElement).files?.[0];
   if (!file) return;
@@ -536,15 +723,12 @@ fileInput.addEventListener('change', async (event) => {
   minimap.resize();
   renderer.resize();
 
-  // Set default initial loop window snapped to measure 1 and measure 3
   loopState.start = currentBarLines[0]?.time ?? 0;
   loopState.end = currentBarLines[2]?.time ?? Math.min(8, currentSong.duration);
   loopState.enabled = false;
 
   selectedTrackIds.clear();
   trackOctaveShifts.clear();
-  globalTranspose = 0;
-  transposeLabel.innerText = '+0 st';
 
   trackListEl.innerHTML = '';
 currentSong.tracks.forEach((track) => {
@@ -651,6 +835,7 @@ stopBtn.disabled = false;
 autoFitBtn.disabled = false;
 
 updateLoopUI();
+updateSyncOffsetCalibration();
 rebuildCombinedNotes();
 stopPlayback();
 });

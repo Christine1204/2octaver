@@ -15,46 +15,80 @@
           <div id="device-info">No MIDI keyboard connected</div>
         </header>
 
-        <section class="sidebar-group">
-          <label class="btn file-btn">
-            Load MIDI
-            <input type="file" id="midi-upload" accept=".mid,.midi" />
-          </label>
-
-          <label class="btn file-btn audio-file-btn">
-            Load Audio (MP3/WAV)
-            <input type="file" id="audio-upload" accept="audio/*" />
-          </label>
+        <!-- 1. FILES -->
+        <section class="sidebar-section">
+          <h3 class="section-title">Files</h3>
+          <div class="file-btn-group">
+            <label class="btn file-btn">
+              Load MIDI
+              <input type="file" id="midi-upload" accept=".mid,.midi" />
+            </label>
+            <label class="btn file-btn audio-file-btn">
+              Load Audio (MP3/WAV)
+              <input type="file" id="audio-upload" accept="audio/*" />
+            </label>
+          </div>
           <div id="audio-status" class="status-hint">No backing track loaded</div>
         </section>
 
-        <!-- Audio Mixing & Calibration -->
-        <section class="sidebar-group audio-controls-group">
-          <div class="control-row">
-            <label for="audio-volume">Audio Vol</label>
-            <input type="range" id="audio-volume" min="0" max="1" step="0.05" value="0.8" />
-          </div>
-          <div class="control-row">
-            <label for="sync-offset">Sync Delay: <span id="offset-label">0ms</span></label>
-            <input type="range" id="sync-offset" min="-200" max="200" step="5" value="0" />
+        <!-- 2. AUDIO & SYNC -->
+        <section class="sidebar-section">
+          <h3 class="section-title">Audio & Sync</h3>
+          <div class="control-box">
+            <!-- Audio Volume -->
+            <div class="control-row">
+              <div class="label-with-value">
+                <label for="audio-volume">Audio Volume</label>
+                <div class="val-cluster">
+                  <span id="volume-label" class="val-pill">80%</span>
+                  <button type="button" id="volume-reset-btn" class="reset-pill-btn" title="Reset Volume to 80%">↺</button>
+                </div>
+              </div>
+              <input type="range" id="audio-volume" min="0" max="1" step="0.05" value="0.8" />
+            </div>
+
+            <!-- Coarse Sync Delay (±10s) -->
+            <div class="control-row">
+              <div class="label-with-value">
+                <label for="coarse-sync-slider">Coarse Sync (±10s)</label>
+                <div class="val-cluster">
+                  <span id="coarse-val" class="val-pill">0.0s</span>
+                  <button type="button" id="coarse-reset-btn" class="reset-pill-btn" title="Reset Coarse Sync to 0s">0</button>
+                </div>
+              </div>
+              <input type="range" id="coarse-sync-slider" min="-10" max="10" step="0.1" value="0" />
+            </div>
+
+            <!-- Fine Sync Delay (±1s / ±1000ms) -->
+            <div class="control-row">
+              <div class="label-with-value">
+                <label for="fine-sync-slider">Fine Sync (±1s)</label>
+                <div class="val-cluster">
+                  <span id="fine-val" class="val-pill">0ms</span>
+                  <button type="button" id="fine-reset-btn" class="reset-pill-btn" title="Reset Fine Sync to 0ms">0</button>
+                </div>
+              </div>
+              <input type="range" id="fine-sync-slider" min="-1000" max="1000" step="5" value="0" />
+            </div>
           </div>
         </section>
 
-        <!-- Transport & Speed Controls -->
-        <section class="sidebar-group transport-controls">
+        <!-- 3. TRANSPORT & SPEED -->
+        <section class="sidebar-section">
+          <h3 class="section-title">Transport</h3>
           <div class="btn-row">
             <button id="play-btn" disabled>Play (Space)</button>
             <button id="stop-btn" disabled>Stop</button>
-            <button id="loop-btn" class="loop-toggle-btn" title="Toggle Loop Mode (L or Double-Click Marker)">
+            <button id="loop-btn" class="loop-toggle-btn" title="Toggle Loop Mode (L)">
               <span class="loop-dot"></span>
               Loop
             </button>
           </div>
 
-          <div class="speed-control-box">
-            <div class="speed-header">
+          <div class="control-box">
+            <div class="label-with-value">
               <span>Playback Speed</span>
-              <span id="speed-label">1.00×</span>
+              <span id="speed-label" class="val-pill">1.00×</span>
             </div>
             <input type="range" id="speed-slider" min="0.3" max="1.2" step="0.05" value="1.0" />
             <div class="speed-presets">
@@ -64,36 +98,40 @@
               <button type="button" class="preset-btn active" data-speed="1.0">1.0×</button>
             </div>
           </div>
-
-          <div class="transpose-box">
-            <div class="transpose-actions">
-              <button id="oct-down-btn">-8va</button>
-              <span id="transpose-label">+0 st</span>
-              <button id="oct-up-btn">+8va</button>
-            </div>
-            <button id="auto-fit-btn" class="secondary-btn" disabled>Auto Fit</button>
-          </div>
-
-          <!-- Feature Toggles -->
-          <label class="toggle-box">
-            <input type="checkbox" id="fold-toggle" checked />
-            <span>Fold all notes to 2 octaves</span>
-          </label>
-
-          <label class="toggle-box">
-            <input type="checkbox" id="note-label-toggle" checked />
-            <span>Show names on falling notes</span>
-          </label>
-
-          <label class="toggle-box">
-            <input type="checkbox" id="key-label-toggle" checked />
-            <span>Show names on piano keys</span>
-          </label>
         </section>
 
-        <!-- Songsterr-style Multi-Track List -->
-        <section class="sidebar-group tracks-section">
-          <h3>Tracks</h3>
+        <!-- 4. PRACTICE & DISPLAY -->
+        <section class="sidebar-section">
+          <h3 class="section-title">Practice & Display</h3>
+          <div class="toggle-stack">
+            <label class="toggle-box practice-toggle">
+              <input type="checkbox" id="wait-toggle" />
+              <span>Wait for notes (Practice Mode)</span>
+            </label>
+
+            <label class="toggle-box">
+              <input type="checkbox" id="fold-toggle" checked />
+              <span>Fold all notes to 2 octaves</span>
+            </label>
+
+            <label class="toggle-box">
+              <input type="checkbox" id="note-label-toggle" checked />
+              <span>Show names on falling notes</span>
+            </label>
+
+            <label class="toggle-box">
+              <input type="checkbox" id="key-label-toggle" checked />
+              <span>Show names on piano keys</span>
+            </label>
+          </div>
+        </section>
+
+        <!-- 5. TRACKS -->
+        <section class="sidebar-section tracks-section">
+          <div class="section-title-row">
+            <h3 class="section-title">Tracks</h3>
+            <button id="auto-fit-btn" class="header-action-btn" title="Auto-transpose all tracks into 2-octave range" disabled>Auto-Fit All</button>
+          </div>
           <div id="track-list" class="track-list">
             <p class="empty-hint">Load a MIDI file to select tracks.</p>
           </div>
@@ -102,27 +140,34 @@
 
       <!-- Main Visual Viewport -->
       <main id="viewport">
-        <!-- Integrated DAW Overview & Loop Track -->
         <div class="timeline-container" id="timeline-container">
           <canvas id="timeline-canvas"></canvas>
 
-          <!-- Slideable Loop Marker A -->
-          <div id="loop-marker-a" class="loop-slider-marker" title="Drag to adjust Start (Snaps to bars) • Double-click to toggle loop">
+          <div id="loop-marker-a" class="loop-slider-marker" title="Drag Loop Start [A] • Double-click to toggle loop">
             <div class="loop-handle-tag">A</div>
             <div class="loop-handle-line"></div>
           </div>
 
-          <!-- Slideable Loop Marker B -->
-          <div id="loop-marker-b" class="loop-slider-marker" title="Drag to adjust End (Snaps to bars) • Double-click to toggle loop">
+          <div id="loop-marker-b" class="loop-slider-marker" title="Drag Loop End [B] • Double-click to toggle loop">
             <div class="loop-handle-tag">B</div>
             <div class="loop-handle-line"></div>
           </div>
 
-          <!-- Playhead -->
           <div id="timeline-playhead"></div>
         </div>
 
-        <!-- 4-Octave Falling Notes Stage -->
+        <div id="accuracy-hud" class="accuracy-hud">
+          <div class="metric-block pitch-metric">
+            <span class="metric-label">PITCH</span>
+            <span id="pitch-acc-val" class="metric-val">--%</span>
+          </div>
+          <div class="hud-divider"></div>
+          <div class="metric-block rhythm-metric">
+            <span class="metric-label">RHYTHM</span>
+            <span id="rhythm-acc-val" class="metric-val">--%</span>
+          </div>
+        </div>
+
         <div class="canvas-stage">
           <canvas id="note-canvas"></canvas>
         </div>

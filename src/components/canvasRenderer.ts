@@ -6,8 +6,8 @@ export type NoteWithMeta = ParsedNote & { color?: string };
 
 export interface NoteOverlap {
     midi: number;
-    time: number;       // overlap start time in seconds
-    duration: number;   // overlap duration in seconds
+    time: number;
+    duration: number;
     baseColor: string;
     stripeColor: string;
 }
@@ -22,6 +22,9 @@ export class NoteRenderer {
     private playableStart = 48; // C3
     private playableEnd = 72;   // C5
     private pixelsPerSecond = 200;
+
+    // Visual breathing room above the physical keyboard border
+    private readonly hitLineBuffer = 8;
 
     constructor(canvasId: string) {
         const el = document.getElementById(canvasId) as HTMLCanvasElement;
@@ -75,7 +78,7 @@ export class NoteRenderer {
         showNoteLabels = true
     ): void {
         const rect = this.canvas.getBoundingClientRect();
-        const hitLineY = rect.height;
+        const hitLineY = rect.height - this.hitLineBuffer;
 
         this.ctx.clearRect(0, 0, rect.width, rect.height);
 
@@ -86,7 +89,7 @@ export class NoteRenderer {
         const rightInactiveX = leftInactiveWidth + activeWidth;
         const rightInactiveWidth = rect.width - rightInactiveX;
 
-        // 1. Shaded Inactive Margins
+        // 1. Shaded Out-Of-Bounds Margins
         this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
         this.ctx.fillRect(0, 0, leftInactiveWidth, rect.height);
         this.ctx.fillRect(rightInactiveX, 0, rightInactiveWidth, rect.height);
@@ -100,9 +103,9 @@ export class NoteRenderer {
         this.ctx.lineTo(rightInactiveX, rect.height);
         this.ctx.stroke();
 
-        const visibleTimeWindow = rect.height / this.pixelsPerSecond;
+        const visibleTimeWindow = hitLineY / this.pixelsPerSecond;
 
-        // 2. Vertical Waveform
+        // 2. Vertical Waveform Monitor
         if (waveform && waveform.peaks.length > 0) {
             const centerX = rightInactiveX + rightInactiveWidth / 2;
             const maxHalfWidth = (rightInactiveWidth / 2) * 0.85;
@@ -122,7 +125,7 @@ export class NoteRenderer {
             const rightPath: { x: number; y: number }[] = [];
 
             for (let t = timeStart; t <= timeEnd; t += stepTime) {
-                const audioTime = t - syncOffsetSeconds;
+                const audioTime = t + syncOffsetSeconds;
                 const peakIndex = Math.floor(audioTime * waveform.peaksPerSecond);
 
                 let amp = 0;
@@ -171,7 +174,7 @@ export class NoteRenderer {
             this.ctx.fillText(`m.${bar.measureNumber} (${bar.timeSignature})`, 8, y - 4);
         }
 
-        // 4. Base Notes (With Crisp White Outline & Inset Gloss)
+        // 4. Falling Notes
         for (const note of notes) {
             const timeUntilHit = note.time - currentTime;
             if (timeUntilHit + note.duration < 0) continue;
@@ -199,20 +202,20 @@ export class NoteRenderer {
             this.ctx.fillStyle = isPlayable ? baseColor : 'rgba(100, 116, 139, 0.4)';
             this.ctx.fill();
 
-            // Top gloss line
+            // Top gloss highlight
             if (isPlayable && noteHeight > 10) {
                 this.ctx.fillStyle = 'rgba(255, 255, 255, 0.28)';
                 this.ctx.fillRect(x + 1, noteY + 1, w - 2, 3);
             }
 
-            // Feature 1: Crisp White Outline
-            this.ctx.strokeStyle = isPlayable ? '#ffffff' : 'rgba(255, 255, 255, 0.4)';
+            // Crisp border
+            this.ctx.strokeStyle = isPlayable ? '#ffffff' : 'rgba(255, 255, 255, 0.35)';
             this.ctx.lineWidth = 1.5;
             this.ctx.stroke();
             this.ctx.restore();
         }
 
-        // 5. Feature 4: Angled Diagonal Slashes on Overlapping Regions
+        // 5. Candy-Stripe Overlaps
         for (const ov of overlaps) {
             const timeUntilHit = ov.time - currentTime;
             if (timeUntilHit + ov.duration < 0) continue;
@@ -235,11 +238,9 @@ export class NoteRenderer {
             }
             this.ctx.clip();
 
-            // Base track color underlay
             this.ctx.fillStyle = ov.baseColor;
             this.ctx.fill();
 
-            // Diagonal hazard slashes of overlapping track color
             this.ctx.strokeStyle = ov.stripeColor;
             this.ctx.lineWidth = 4;
             const step = 8;
@@ -252,16 +253,15 @@ export class NoteRenderer {
 
             this.ctx.restore();
 
-            // White outline around the overlap segment
             this.ctx.strokeStyle = '#ffffff';
             this.ctx.lineWidth = 1.5;
             this.ctx.strokeRect(x, y, w, h);
         }
 
-        // 6. Feature 3: Note Pitch Labels on Falling Blocks (e.g. F#)
+        // 6. High-Contrast Note Pitch Badges
         if (showNoteLabels) {
             this.ctx.save();
-            this.ctx.font = 'bold 9px monospace';
+            this.ctx.font = 'bold 10px monospace';
             this.ctx.textAlign = 'center';
             this.ctx.textBaseline = 'middle';
 
@@ -281,14 +281,22 @@ export class NoteRenderer {
                 const w = geom.width - 3;
 
                 const noteName = NOTE_NAMES[note.midi % 12];
-                const textX = x + w / 2;
-                // Position near the leading bottom edge
-                const textY = noteY + Math.max(noteHeight - 7, noteHeight / 2);
+                const textX = Math.floor(x + w / 2);
+                const textY = Math.floor(noteY + Math.max(noteHeight - 9, noteHeight / 2));
 
-                // Dark halo stroke for maximum contrast over bright colors
-                this.ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
-                this.ctx.lineWidth = 2.5;
-                this.ctx.strokeText(noteName, textX, textY);
+                const pillWidth = Math.min(w - 2, 22);
+                const pillHeight = 13;
+                const pillX = textX - pillWidth / 2;
+                const pillY = textY - pillHeight / 2;
+
+                this.ctx.fillStyle = 'rgba(6, 10, 18, 0.88)';
+                this.ctx.beginPath();
+                if ((this.ctx as any).roundRect) {
+                    (this.ctx as any).roundRect(pillX, pillY, pillWidth, pillHeight, 3);
+                } else {
+                    this.ctx.rect(pillX, pillY, pillWidth, pillHeight);
+                }
+                this.ctx.fill();
 
                 this.ctx.fillStyle = '#ffffff';
                 this.ctx.fillText(noteName, textX, textY);
@@ -296,21 +304,26 @@ export class NoteRenderer {
             this.ctx.restore();
         }
 
-        // 7. Hit Line Beam
-        this.ctx.strokeStyle = 'rgba(56, 189, 248, 0.2)';
-        this.ctx.lineWidth = 2;
+        // 7. Hit-Line Threshold with Buffer Clearance
+        // Subtle runway shadow in the buffer zone
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+        this.ctx.fillRect(0, hitLineY, rect.width, this.hitLineBuffer);
+
+        // Strike beam across active 2 octaves
+        this.ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
+        this.ctx.lineWidth = 1.5;
         this.ctx.beginPath();
-        this.ctx.moveTo(0, hitLineY - 1);
-        this.ctx.lineTo(leftInactiveWidth, hitLineY - 1);
-        this.ctx.moveTo(rightInactiveX, hitLineY - 1);
-        this.ctx.lineTo(rect.width, hitLineY - 1);
+        this.ctx.moveTo(0, hitLineY);
+        this.ctx.lineTo(leftInactiveWidth, hitLineY);
+        this.ctx.moveTo(rightInactiveX, hitLineY);
+        this.ctx.lineTo(rect.width, hitLineY);
         this.ctx.stroke();
 
         this.ctx.strokeStyle = '#38bdf8';
         this.ctx.lineWidth = 2;
         this.ctx.beginPath();
-        this.ctx.moveTo(leftInactiveWidth, hitLineY - 1);
-        this.ctx.lineTo(rightInactiveX, hitLineY - 1);
+        this.ctx.moveTo(leftInactiveWidth, hitLineY);
+        this.ctx.lineTo(rightInactiveX, hitLineY);
         this.ctx.stroke();
     }
 }
