@@ -8,6 +8,8 @@ import { generateBarLines, type BarLine } from './midi/conductor';
 import { BackingTrackPlayer } from './audio/backingTrack';
 import { extractWaveformData, type WaveformData } from './audio/waveform';
 import { assignFingering, enforceHandTerritories } from './midi/fingering';
+import { ParticleEngine } from './components/particles';
+import { ScoreEngine, type HitRating } from './gameplay/scoreEngine';
 import { getInstrumentIcon } from './components/icons';
 import type { ParsedSong } from './midi/types';
 
@@ -21,7 +23,7 @@ const audioVolume = document.getElementById('audio-volume') as HTMLInputElement;
 const volumeLabel = document.getElementById('volume-label') as HTMLSpanElement;
 const volumeResetBtn = document.getElementById('volume-reset-btn') as HTMLButtonElement;
 
-// Dual Sync Delay Sliders & Default Buttons
+// Dual Sync Delay Sliders
 const coarseSyncSlider = document.getElementById('coarse-sync-slider') as HTMLInputElement;
 const coarseVal = document.getElementById('coarse-val') as HTMLSpanElement;
 const coarseResetBtn = document.getElementById('coarse-reset-btn') as HTMLButtonElement;
@@ -37,14 +39,34 @@ const loopBtn = document.getElementById('loop-btn') as HTMLButtonElement;
 const autoFitBtn = document.getElementById('auto-fit-btn') as HTMLButtonElement;
 const deviceInfo = document.getElementById('device-info') as HTMLDivElement;
 
-// Toggles & Live Accuracy HUD
+// Toggles
 const waitToggle = document.getElementById('wait-toggle') as HTMLInputElement;
 const fingerToggle = document.getElementById('finger-toggle') as HTMLInputElement;
 const foldToggle = document.getElementById('fold-toggle') as HTMLInputElement;
 const noteLabelToggle = document.getElementById('note-label-toggle') as HTMLInputElement;
 const keyLabelToggle = document.getElementById('key-label-toggle') as HTMLInputElement;
-const pitchAccVal = document.getElementById('pitch-acc-val') as HTMLSpanElement;
-const rhythmAccVal = document.getElementById('rhythm-acc-val') as HTMLSpanElement;
+
+// Arcade HUD Elements
+const arcadeHudEl = document.getElementById('arcade-hud') as HTMLDivElement;
+const hudScore = document.getElementById('hud-score') as HTMLDivElement;
+const multiplierBadge = document.getElementById('multiplier-badge') as HTMLDivElement;
+const streakVal = document.getElementById('streak-val') as HTMLSpanElement;
+const ratingToast = document.getElementById('rating-toast') as HTMLDivElement;
+const starIcons = document.querySelectorAll<HTMLSpanElement>('.star-icon');
+
+// Summary Modal Elements
+const summaryModal = document.getElementById('summary-modal') as HTMLDivElement;
+const summaryStars = document.querySelectorAll<HTMLSpanElement>('.big-star');
+const summaryFinalScore = document.getElementById('summary-final-score') as HTMLSpanElement;
+const summaryAccuracy = document.getElementById('summary-accuracy') as HTMLElement;
+const summaryMaxStreak = document.getElementById('summary-max-streak') as HTMLElement;
+const summaryPerfect = document.getElementById('summary-perfect') as HTMLElement;
+const summaryGreat = document.getElementById('summary-great') as HTMLElement;
+const summaryGood = document.getElementById('summary-good') as HTMLElement;
+const summaryMisses = document.getElementById('summary-misses') as HTMLElement;
+const summaryStarReqs = document.getElementById('summary-star-reqs') as HTMLDivElement;
+const summaryReplayBtn = document.getElementById('summary-replay-btn') as HTMLButtonElement;
+const summaryCloseBtn = document.getElementById('summary-close-btn') as HTMLButtonElement;
 
 const speedSlider = document.getElementById('speed-slider') as HTMLInputElement;
 const speedLabel = document.getElementById('speed-label') as HTMLSpanElement;
@@ -56,6 +78,8 @@ const renderer = new NoteRenderer('note-canvas');
 const minimap = new TimelineMinimap('timeline-canvas', 'timeline-playhead');
 const midiInput = new MidiInputManager();
 const backingTrack = new BackingTrackPlayer();
+const particles = new ParticleEngine();
+const scoreEngine = new ScoreEngine();
 
 // App State
 let currentSong: ParsedSong | null = null;
@@ -77,12 +101,12 @@ let waitForNotes = false;
 let combinedNotes: NoteWithMeta[] = [];
 let detectedOverlaps: NoteOverlap[] = [];
 
-// Physical pressed keys on MIDI keyboard
+// Physical pressed keys
 const physicalPressedKeys = new Set<number>();
 
-// Strike-To-Advance Precision Rhythm Tolerances
-const EARLY_HIT_WINDOW = 0.14;  // 140ms early strike buffer
-const LATE_GRACE_WINDOW = 0.09; // 90ms late window before pausing
+// Strike-To-Advance Precision Tolerances
+const EARLY_HIT_WINDOW = 0.18; // 180ms early strike buffer
+const LATE_GRACE_WINDOW = 0.18; // 180ms late window
 
 // Practice Mode State
 const noteStruckMap = new Map<number, boolean>();
@@ -90,16 +114,8 @@ const currentWaitingNoteIds = new Set<number>();
 const currentWaitingMidis = new Set<number>();
 let isWaitingForInput = false;
 
-// Live Session Accuracy State
-interface NoteEvaluation {
-  evaluated: boolean;
-  hit: boolean;
-  timingScore: number;
-}
-const noteEvalMap = new Map<number, NoteEvaluation>();
-let sessionEvaluatedCount = 0;
-let sessionHitCount = 0;
-let sessionRhythmScoreSum = 0;
+// Star Unlock Tracking
+let currentActiveStars = 0;
 
 // Loop State
 const loopState: LoopRegion = {
@@ -113,39 +129,159 @@ let isPlaying = false;
 let playbackSpeed = 1.0;
 let currentTransportTime = 0;
 let lastFrameTimestamp = performance.now();
+let toastTimeout: number | null = null;
 
-// 1. Accuracy Metric Engine
-function resetSessionAccuracy(): void {
-  noteEvalMap.clear();
+// 1. Arcade HUD & Star Animations
+function showRatingToast(rating: HitRating): void {
+  if (toastTimeout) window.clearTimeout(toastTimeout);
+  ratingToast.innerText = rating === 'PERFECT' ? 'PERFECT!' : rating === 'GREAT' ? 'GREAT!' : rating === 'GOOD' ? 'GOOD' : 'MISS';
+  ratingToast.className = `rating-toast show ${rating.toLowerCase()}`;
+
+  toastTimeout = window.setTimeout(() => {
+    ratingToast.classList.remove('show');
+  }, 450);
+}
+
+function triggerStarCelebration(starNumber: number): void {
+  const targetStarEl = document.querySelector<HTMLSpanElement>(`.star-icon[data-star="${starNumber}"]`);
+  if (targetStarEl) {
+    targetStarEl.classList.remove('star-unlock-anim');
+    void targetStarEl.offsetWidth;
+    targetStarEl.classList.add('star-unlock-anim');
+
+    arcadeHudEl.classList.add('star-flash');
+    setTimeout(() => arcadeHudEl.classList.remove('star-flash'), 650);
+
+    const starRect = targetStarEl.getBoundingClientRect();
+    const canvasRect = (document.getElementById('note-canvas') as HTMLCanvasElement).getBoundingClientRect();
+    const emitX = starRect.left + starRect.width / 2 - canvasRect.left;
+    const emitY = starRect.top + starRect.height / 2 - canvasRect.top;
+
+    (particles as any).emitStarCelebration?.(emitX, Math.max(30, emitY));
+  }
+}
+
+function updateArcadeHUD(): void {
+  const state = scoreEngine.getState();
+  hudScore.innerText = (state.score || 0).toString().padStart(6, '0');
+  streakVal.innerText = (state.streak || 0).toString();
+
+  const mult = typeof state.multiplier === 'number' ? state.multiplier : 1.0;
+  multiplierBadge.innerText = `${mult.toFixed(1)}X`;
+
+  const multTier = Math.min(4, Math.max(1, Math.floor(mult)));
+  multiplierBadge.className = `multiplier-badge mult-${multTier}x`;
+
+  if (typeof (backingTrack as any).updatePerformanceFilter === 'function') {
+    (backingTrack as any).updatePerformanceFilter(mult);
+  }
+
+  if (state.stars > currentActiveStars) {
+    for (let s = currentActiveStars + 1; s <= state.stars; s++) {
+      triggerStarCelebration(s);
+    }
+    currentActiveStars = state.stars;
+  } else if (state.stars < currentActiveStars) {
+    currentActiveStars = state.stars;
+  }
+
+  starIcons.forEach((starEl) => {
+    const starIdx = parseInt(starEl.dataset.star || '0', 10);
+    starEl.classList.toggle('filled', starIdx <= state.stars);
+  });
+}
+
+function showSummaryModal(): void {
+  pausePlayback();
+  const state = scoreEngine.getState();
+  const reqs = scoreEngine.getStarRequirements();
+
+  summaryFinalScore.innerText = state.score.toString().padStart(6, '0');
+  summaryMaxStreak.innerText = state.maxStreak.toString();
+  summaryPerfect.innerText = state.perfectHits.toString();
+  summaryGreat.innerText = state.greatHits.toString();
+  summaryGood.innerText = state.goodHits.toString();
+  summaryMisses.innerText = state.misses.toString();
+
+  const totalHits = state.perfectHits + state.greatHits + state.goodHits;
+  const attempted = totalHits + state.misses;
+  const accPct = attempted > 0 ? Math.round((totalHits / attempted) * 100) : 0;
+  summaryAccuracy.innerText = `${accPct}%`;
+
+  summaryStars.forEach((starEl) => {
+    const starIdx = parseInt(starEl.dataset.star || '0', 10);
+    starEl.classList.toggle('filled', starIdx <= state.stars);
+  });
+
+  summaryStarReqs.innerHTML = '';
+  reqs.forEach((r) => {
+    const row = document.createElement('div');
+    const isEarned = state.score >= r.scoreRequired;
+    row.className = `star-req-row ${isEarned ? 'achieved' : ''}`;
+    row.innerHTML = `
+    <span class="star-req-badge">★ Star ${r.star} (${r.pctOfIdeal}%)</span>
+    <span>${r.scoreRequired.toLocaleString()} pts</span>
+    `;
+    summaryStarReqs.appendChild(row);
+  });
+
+  summaryModal.classList.remove('hidden');
+}
+
+function closeSummaryModal(): void {
+  summaryModal.classList.add('hidden');
+}
+
+// Modal Button Listeners
+summaryReplayBtn.addEventListener('click', () => {
+  closeSummaryModal();
+  resetArcadeSession();
+  seekTransport(0);
+  startPlayback();
+});
+
+summaryCloseBtn.addEventListener('click', () => {
+  closeSummaryModal();
+  resetArcadeSession();
+  stopPlayback();
+});
+
+// Spacebar Replay & Transport Hotkey
+window.addEventListener('keydown', (e) => {
+  const activeEl = document.activeElement;
+  if (activeEl?.tagName === 'INPUT' && (activeEl as HTMLInputElement).type === 'text') return;
+
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (!summaryModal.classList.contains('hidden')) {
+      closeSummaryModal();
+      resetArcadeSession();
+      seekTransport(0);
+      startPlayback();
+    } else if (isPlaying) {
+      pausePlayback();
+    } else {
+      startPlayback();
+    }
+  } else if (e.code === 'KeyL') {
+    e.preventDefault();
+    toggleLoop();
+  }
+});
+
+function resetArcadeSession(): void {
   noteStruckMap.clear();
   currentWaitingNoteIds.clear();
   currentWaitingMidis.clear();
-  sessionEvaluatedCount = 0;
-  sessionHitCount = 0;
-  sessionRhythmScoreSum = 0;
-  pitchAccVal.innerText = '--%';
-  rhythmAccVal.innerText = '--%';
+  scoreEngine.reset();
+  particles.clear();
+  currentActiveStars = 0;
+  starIcons.forEach((s) => s.classList.remove('star-unlock-anim', 'filled'));
+  updateArcadeHUD();
+  console.log('%c[SESSION RESET] All hit states & score data cleared.', 'color: #94a3b8');
 }
 
-function updateAccuracyHUD(): void {
-  if (sessionEvaluatedCount === 0) {
-    pitchAccVal.innerText = '--%';
-    rhythmAccVal.innerText = '--%';
-    return;
-  }
-
-  const pitchPct = Math.round((sessionHitCount / sessionEvaluatedCount) * 100);
-  pitchAccVal.innerText = `${pitchPct}%`;
-
-  if (sessionHitCount > 0) {
-    const rhythmPct = Math.round(sessionRhythmScoreSum / sessionHitCount);
-    rhythmAccVal.innerText = `${rhythmPct}%`;
-  } else {
-    rhythmAccVal.innerText = '0%';
-  }
-}
-
-// 2. Hardware Input & Single-Note Consumption
+// 2. Hardware Input with Diagnostics
 midiInput
 .init()
 .then((devices) => {
@@ -155,10 +291,21 @@ midiInput
   deviceInfo.innerText = `MIDI Error: ${err.message}`;
 });
 
+// Hardware duplicate packet filter (guards against dual-port/multi-channel controllers)
+const lastPhysicalNoteOnTimes = new Map<number, number>();
+
 midiInput.subscribe((note, _vel, isNoteOn) => {
   visualizer.setUserNoteState(note, isNoteOn);
 
   if (isNoteOn) {
+    // Drop ghost duplicate packets arriving within 40ms on the same pitch
+    const now = performance.now();
+    const lastTime = lastPhysicalNoteOnTimes.get(note) ?? 0;
+    if (now - lastTime < 40) {
+      return;
+    }
+    lastPhysicalNoteOnTimes.set(note, now);
+
     physicalPressedKeys.add(note);
 
     if (isPlaying) {
@@ -166,7 +313,6 @@ midiInput.subscribe((note, _vel, isNoteOn) => {
       let bestAbsDiff = Infinity;
       const maxLate = isWaitingForInput ? 0.60 : LATE_GRACE_WINDOW;
 
-      // Match ONLY the single closest un-struck note for this pitch
       for (const n of combinedNotes) {
         if (n.midi !== note || n.midi < 48 || n.midi > 72) continue;
         if (noteStruckMap.get(n.id)) continue;
@@ -188,7 +334,6 @@ midiInput.subscribe((note, _vel, isNoteOn) => {
         currentWaitingNoteIds.delete(bestNote.id);
         currentWaitingMidis.delete(bestNote.midi);
 
-        // Also satisfy parallel unison tracks playing the exact same note
         for (const sibling of combinedNotes) {
           if (
             sibling.id !== bestNote.id &&
@@ -200,23 +345,39 @@ midiInput.subscribe((note, _vel, isNoteOn) => {
           }
         }
 
-        let timingScore = 100;
-        if (bestAbsDiff <= 0.04) timingScore = 100;
-        else if (bestAbsDiff <= 0.08) timingScore = 85;
-        else if (bestAbsDiff <= 0.12) timingScore = 65;
-        else timingScore = 45;
+        const { rating, points, mult, multMilestoneCrossed } = scoreEngine.registerHit(
+          currentTransportTime - bestNote.time
+        );
+        showRatingToast(rating);
+        updateArcadeHUD();
 
-        const existing = noteEvalMap.get(bestNote.id);
-        if (!existing || !existing.evaluated) {
-          sessionEvaluatedCount++;
-          sessionHitCount++;
-          sessionRhythmScoreSum += timingScore;
-          noteEvalMap.set(bestNote.id, { evaluated: true, hit: true, timingScore });
-          updateAccuracyHUD();
+        const geom = renderer.getNoteGeometry(bestNote.midi);
+        if (geom) {
+          const hitLineY = renderer.getHitLineY();
+          const targetX = geom.x + geom.width / 2;
+
+          particles.emitHit(targetX, hitLineY, bestNote.color || '#38bdf8', 28);
+          particles.emitScorePopup(targetX, hitLineY, points);
+          (particles as any).emitRatingPopup?.(targetX, hitLineY, rating);
+
+          if (multMilestoneCrossed) {
+            particles.emitMultiplierBurst(targetX, hitLineY, mult);
+          }
+        }
+        // Inside midiInput.subscribe (Miss branch):
+      } else if (!isWaitingForInput && note >= 48 && note <= 72) {
+        scoreEngine.registerMiss();
+        showRatingToast('MISS');
+        updateArcadeHUD();
+        backingTrack.triggerComboBreakImpact(); // Audible choke
+
+        const geom = renderer.getNoteGeometry(note);
+        if (geom) {
+          const hitLineY = renderer.getHitLineY();
+          (particles as any).emitRatingPopup?.(geom.x + geom.width / 2, hitLineY, 'MISS');
         }
       }
 
-      // Resume immediately if we satisfied the note halting the engine
       if (isWaitingForInput && currentWaitingNoteIds.size === 0) {
         isWaitingForInput = false;
         lastFrameTimestamp = performance.now();
@@ -276,15 +437,18 @@ function computeNoteOverlaps(notes: NoteWithMeta[]): NoteOverlap[] {
   return overlaps;
 }
 
-// 5. Multi-Track Combiner & Territory-Enforced Fingering
+// 5. Multi-Track Combiner (Unique Note IDs Verified)
 function rebuildCombinedNotes(): void {
   if (!currentSong) {
     combinedNotes = [];
     detectedOverlaps = [];
+    scoreEngine.recalculateTrackBenchmark(0);
+    updateArcadeHUD();
     return;
   }
 
   const activeTracks = currentSong.tracks.filter((t) => selectedTrackIds.has(t.id));
+  let noteIdCounter = 1;
 
   combinedNotes = activeTracks.flatMap((track) => {
     const color = TRACK_PALETTE[track.id % TRACK_PALETTE.length];
@@ -296,19 +460,22 @@ function rebuildCombinedNotes(): void {
     if (foldTo2Octaves && !track.isDrum) {
       finalPitch = foldPitchToRange(finalPitch, 48, 72);
     }
-    return { ...n, midi: finalPitch, color, hand };
+    return {
+      ...n,
+      id: noteIdCounter++,
+      midi: finalPitch,
+      color,
+      hand,
+    };
   });
   });
 
-  // Sort notes chronologically
   combinedNotes.sort((a, b) => a.time - b.time);
 
-  // Enforce hand territories: keeps LH strictly below RH without crossover
   if (foldTo2Octaves) {
     enforceHandTerritories(combinedNotes);
   }
 
-  // Calculate ergonomic fingering per hand
   const playable = combinedNotes.filter((n) => n.midi >= 48 && n.midi <= 72);
   const rhNotes = playable.filter((n) => n.hand === 'RH');
   const lhNotes = playable.filter((n) => n.hand === 'LH');
@@ -317,6 +484,15 @@ function rebuildCombinedNotes(): void {
   assignFingering(lhNotes, 'LH');
 
   detectedOverlaps = computeNoteOverlaps(combinedNotes);
+
+  console.log(
+    `%c[TRACKS REBUILT] Total notes: ${combinedNotes.length} (Playable 48-72: ${playable.length}). Sample IDs:`,
+              'color: #38bdf8',
+              combinedNotes.slice(0, 3).map((n) => ({ id: n.id, midi: n.midi, time: n.time }))
+  );
+
+  scoreEngine.recalculateTrackBenchmark(playable.length);
+  updateArcadeHUD();
 
   minimap.draw(combinedNotes, currentBarLines, loopState, currentWaveform, currentOffsetSeconds);
   minimap.updateLoopMarkers(loopState);
@@ -332,12 +508,13 @@ function rebuildCombinedNotes(): void {
       detectedOverlaps,
       showNoteLabels,
       currentWaitingNoteIds,
-      showFingering
+      showFingering,
+      particles
     );
   }
 }
 
-// 6. Target Cues & Red Waiting Key Indicators
+// 6. Target Cues
 function updateTargetCues(time: number): void {
   const activeTargets = new Map<number, string>();
   const leadIn = 0.04;
@@ -377,7 +554,7 @@ minimap.onLoopChange((newA, newB) => {
   minimap.draw(combinedNotes, currentBarLines, loopState, currentWaveform, currentOffsetSeconds);
 });
 
-// 8. Practice Mode & Display Toggles
+// 8. Toggles
 waitToggle.addEventListener('change', () => {
   waitForNotes = waitToggle.checked;
   if (!waitForNotes && isWaitingForInput) {
@@ -403,7 +580,8 @@ fingerToggle.addEventListener('change', () => {
       detectedOverlaps,
       showNoteLabels,
       currentWaitingNoteIds,
-      showFingering
+      showFingering,
+      particles
     );
   }
 });
@@ -425,7 +603,8 @@ noteLabelToggle.addEventListener('change', () => {
       detectedOverlaps,
       showNoteLabels,
       currentWaitingNoteIds,
-      showFingering
+      showFingering,
+      particles
     );
   }
 });
@@ -472,7 +651,7 @@ presetButtons.forEach((btn) => {
   });
 });
 
-// 10. Volume & Two-Tier Sync Delay Calibration
+// 10. Volume & Sync Delay Calibration
 function updateSyncOffsetCalibration(): void {
   currentOffsetSeconds = coarseOffsetSec + fineOffsetMs / 1000;
 
@@ -492,7 +671,8 @@ function updateSyncOffsetCalibration(): void {
       detectedOverlaps,
       showNoteLabels,
       currentWaitingNoteIds,
-      showFingering
+      showFingering,
+      particles
     );
   }
 }
@@ -565,7 +745,7 @@ try {
 minimap.onSeek((targetTime) => {
   currentTransportTime = targetTime;
   backingTrack.seek(targetTime);
-  resetSessionAccuracy();
+  resetArcadeSession();
   updateTargetCues(currentTransportTime);
 
   if (!isPlaying) {
@@ -578,7 +758,8 @@ minimap.onSeek((targetTime) => {
       detectedOverlaps,
       showNoteLabels,
       currentWaitingNoteIds,
-      showFingering
+      showFingering,
+      particles
     );
   }
 });
@@ -591,12 +772,16 @@ function seekTransport(time: number): void {
 }
 
 // 13. Practice Engine Loop
+// 13. Practice Engine Loop
 function renderLoop() {
   const now = performance.now();
   const dt = (now - lastFrameTimestamp) / 1000;
   lastFrameTimestamp = now;
 
+  particles.update(dt);
+
   if (isPlaying) {
+    // --- PRACTICE MODE (WAIT FOR NOTES) LOGIC ---
     if (waitForNotes) {
       let mustWait = false;
       let pausePoint = currentTransportTime;
@@ -607,18 +792,15 @@ function renderLoop() {
         if (n.time > currentTransportTime + 0.01) break;
 
         if (!noteStruckMap.get(n.id)) {
-          // Only auto-resolve held keys if we are ALREADY halted waiting
           if (isWaitingForInput && physicalPressedKeys.has(n.midi)) {
             noteStruckMap.set(n.id, true);
             continue;
           }
 
-          // Let playback glide forward smoothly during the late grace window
           if (n.time + LATE_GRACE_WINDOW > currentTransportTime) {
             continue;
           }
 
-          // Halt promptly when beyond late window without strike
           missingNotes.push(n);
           mustWait = true;
           pausePoint = n.time + LATE_GRACE_WINDOW;
@@ -651,6 +833,7 @@ function renderLoop() {
       }
     }
 
+    // --- TIME ADVANCEMENT ---
     if (!isWaitingForInput) {
       if (backingTrack.hasTrack()) {
         const audioTime = backingTrack.getCurrentTime();
@@ -664,22 +847,42 @@ function renderLoop() {
       }
     }
 
+    // ==============================================================
+    // PUT IT HERE: PASSIVE NOTE MISS CHECK (WHEN NOTE PASSES LINE)
+    // ==============================================================
     if (!waitForNotes) {
       for (const n of combinedNotes) {
         if (n.midi < 48 || n.midi > 72) continue;
-        if (n.time < currentTransportTime - 0.15) {
-          const evalState = noteEvalMap.get(n.id);
-          if (!evalState) {
-            sessionEvaluatedCount++;
-            noteEvalMap.set(n.id, { evaluated: true, hit: false, timingScore: 0 });
-            updateAccuracyHUD();
+
+        // If note is more than 0.22s past the hit line and never got struck
+        if (n.time < currentTransportTime - 0.22) {
+          if (!noteStruckMap.has(n.id)) {
+            noteStruckMap.set(n.id, false);
+            scoreEngine.registerMiss();
+            showRatingToast('MISS');
+            updateArcadeHUD();
+
+            // Optional: trigger subtle choke if you kept that method
+            (backingTrack as any).triggerComboBreakImpact?.();
+
+            // Upward floating MISS popup on the keybed
+            const geom = renderer.getNoteGeometry(n.midi);
+            if (geom) {
+              (particles as any).emitRatingPopup?.(
+                geom.x + geom.width / 2,
+                renderer.getHitLineY(),
+                                                   'MISS'
+              );
+            }
           }
         } else {
-          break;
+          break; // Notes are sorted by time; we can safely exit loop early
         }
       }
     }
+    // ==============================================================
 
+    // --- LOOP REGION REPEAT CHECK ---
     if (loopState.enabled && loopState.end > loopState.start) {
       if (currentTransportTime >= loopState.end) {
         seekTransport(loopState.start);
@@ -687,23 +890,28 @@ function renderLoop() {
     }
 
     updateTargetCues(currentTransportTime);
-    renderer.draw(
-      currentTransportTime,
-      combinedNotes,
-      currentBarLines,
-      currentWaveform,
-      currentOffsetSeconds,
-      detectedOverlaps,
-      showNoteLabels,
-      currentWaitingNoteIds,
-      showFingering
-    );
     minimap.setProgress(currentTransportTime);
 
-    if (currentSong && currentTransportTime > currentSong.duration && !loopState.enabled) {
-      stopPlayback();
+    // Track Completion: Show Summary Performance Modal
+    if (currentSong && currentTransportTime >= currentSong.duration && !loopState.enabled) {
+      showSummaryModal();
     }
   }
+
+  // --- CANVAS RENDER ---
+  renderer.draw(
+    currentTransportTime,
+    combinedNotes,
+    currentBarLines,
+    currentWaveform,
+    currentOffsetSeconds,
+    detectedOverlaps,
+    showNoteLabels,
+    currentWaitingNoteIds,
+    showFingering,
+    particles
+  );
+
   requestAnimationFrame(renderLoop);
 }
 requestAnimationFrame(renderLoop);
@@ -711,9 +919,19 @@ requestAnimationFrame(renderLoop);
 // 14. Playback Controls
 function startPlayback() {
   if (combinedNotes.length === 0) return;
+  closeSummaryModal();
+
+  const isAtStart = currentTransportTime <= 0.05;
+  const isPastEnd = currentSong !== null && currentTransportTime >= currentSong.duration;
+
+  if (isAtStart || isPastEnd) {
+    currentTransportTime = loopState.enabled && loopState.end > loopState.start ? loopState.start : 0;
+    seekTransport(currentTransportTime);
+    resetArcadeSession();
+  }
+
   isPlaying = true;
   isWaitingForInput = false;
-  resetSessionAccuracy();
 
   if (loopState.enabled && loopState.end > loopState.start) {
     if (currentTransportTime < loopState.start || currentTransportTime >= loopState.end) {
@@ -732,7 +950,6 @@ function pausePlayback() {
   isWaitingForInput = false;
   backingTrack.pause();
   playBtn.innerText = 'Resume (Space)';
-  resetSessionAccuracy();
 }
 
 function stopPlayback() {
@@ -745,38 +962,11 @@ function stopPlayback() {
   playBtn.innerText = 'Play (Space)';
   minimap.setProgress(currentTransportTime);
   visualizer.clearTargets();
-  resetSessionAccuracy();
-
-  renderer.draw(
-    currentTransportTime,
-    combinedNotes,
-    currentBarLines,
-    currentWaveform,
-    currentOffsetSeconds,
-    detectedOverlaps,
-    showNoteLabels,
-    currentWaitingNoteIds,
-    showFingering
-  );
+  resetArcadeSession();
 }
 
 playBtn.addEventListener('click', () => (isPlaying ? pausePlayback() : startPlayback()));
 stopBtn.addEventListener('click', stopPlayback);
-
-// Hotkeys: Space (Play/Pause), L (Loop Toggle)
-window.addEventListener('keydown', (e) => {
-  const activeEl = document.activeElement;
-  if (activeEl?.tagName === 'INPUT' && (activeEl as HTMLInputElement).type === 'text') return;
-
-  if (e.code === 'Space') {
-    e.preventDefault();
-    if (isPlaying) pausePlayback();
-    else startPlayback();
-  } else if (e.code === 'KeyL') {
-    e.preventDefault();
-    toggleLoop();
-  }
-});
 
 function formatTrackInfo(rawName: string, noteCount: number, isDrum: boolean) {
   const cleanName = rawName.replace(/\s+/g, ' ').trim();
@@ -802,7 +992,7 @@ function formatTrackInfo(rawName: string, noteCount: number, isDrum: boolean) {
   return { title, subtitle };
 }
 
-// 15. MIDI File Ingestion & Track UI Setup
+// 15. MIDI File Ingestion & Track Setup
 fileInput.addEventListener('change', async (event) => {
   const file = (event.target as HTMLInputElement).files?.[0];
   if (!file) return;

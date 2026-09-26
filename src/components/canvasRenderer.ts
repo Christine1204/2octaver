@@ -1,6 +1,7 @@
 import type { ParsedNote } from '../midi/types';
 import type { BarLine } from '../midi/conductor';
 import type { WaveformData } from '../audio/waveform';
+import type { ParticleEngine } from './particles';
 
 export type NoteWithMeta = ParsedNote & {
     color?: string;
@@ -21,12 +22,11 @@ const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 
 export class NoteRenderer {
     private canvas: HTMLCanvasElement;
     private ctx: CanvasRenderingContext2D;
-    private startNote = 36;     // C2
-    private numKeys = 49;       // C2 to C6
-    private playableStart = 48; // C3
-    private playableEnd = 72;   // C5
+    private startNote = 36;
+    private numKeys = 49;
+    private playableStart = 48;
+    private playableEnd = 72;
     private pixelsPerSecond = 200;
-
     private readonly hitLineBuffer = 8;
 
     constructor(canvasId: string) {
@@ -71,6 +71,10 @@ export class NoteRenderer {
         : { x: whiteKeysBefore * whiteKeyWidth, width: whiteKeyWidth };
     }
 
+    public getHitLineY(): number {
+        return this.canvas.getBoundingClientRect().height - this.hitLineBuffer;
+    }
+
     public draw(
         currentTime: number,
         notes: NoteWithMeta[],
@@ -80,7 +84,8 @@ export class NoteRenderer {
         overlaps: NoteOverlap[] = [],
         showNoteLabels = true,
         waitingNoteIds: Set<number> = new Set(),
-                showFingering = true
+                showFingering = true,
+                particles?: ParticleEngine
     ): void {
         const rect = this.canvas.getBoundingClientRect();
         const hitLineY = rect.height - this.hitLineBuffer;
@@ -94,7 +99,7 @@ export class NoteRenderer {
         const rightInactiveX = leftInactiveWidth + activeWidth;
         const rightInactiveWidth = rect.width - rightInactiveX;
 
-        // 1. Inactive Range Margins
+        // 1. Shaded Inactive Margins
         this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
         this.ctx.fillRect(0, 0, leftInactiveWidth, rect.height);
         this.ctx.fillRect(rightInactiveX, 0, rightInactiveWidth, rect.height);
@@ -108,13 +113,17 @@ export class NoteRenderer {
         this.ctx.lineTo(rightInactiveX, rect.height);
         this.ctx.stroke();
 
-        const visibleTimeWindow = hitLineY / this.pixelsPerSecond;
-
-        // 2. Vertical Waveform
+        // 2. Ambient Vertical Waveform (Smoothed Silhouette, No Stroke Jitter)
         if (waveform && waveform.peaks.length > 0) {
-            const centerX = rightInactiveX + rightInactiveWidth / 2;
-            const maxHalfWidth = (rightInactiveWidth / 2) * 0.85;
+            const centerX = Math.floor(rightInactiveX + rightInactiveWidth / 2);
+            const maxHalfWidth = (rightInactiveWidth / 2) * 0.82;
 
+            this.ctx.save();
+            this.ctx.beginPath();
+            this.ctx.rect(rightInactiveX, 0, rightInactiveWidth, rect.height);
+            this.ctx.clip();
+
+            // Background centerline guide
             this.ctx.strokeStyle = 'rgba(148, 163, 184, 0.1)';
             this.ctx.lineWidth = 1;
             this.ctx.beginPath();
@@ -122,45 +131,57 @@ export class NoteRenderer {
             this.ctx.lineTo(centerX, rect.height);
             this.ctx.stroke();
 
-            const timeStart = currentTime - 0.2;
-            const timeEnd = currentTime + visibleTimeWindow + 0.2;
-            const stepTime = 1 / waveform.peaksPerSecond;
+            const yCoords: number[] = [];
+            const halfWidths: number[] = [];
+            const yStep = 2; // Fine 2px resolution for fluid curvature
 
-            const leftPath: { x: number; y: number }[] = [];
-            const rightPath: { x: number; y: number }[] = [];
-
-            for (let t = timeStart; t <= timeEnd; t += stepTime) {
+            for (let y = 0; y <= hitLineY; y += yStep) {
+                const t = currentTime + (hitLineY - y) / this.pixelsPerSecond;
                 const audioTime = t + syncOffsetSeconds;
-                const peakIndex = Math.floor(audioTime * waveform.peaksPerSecond);
+                const exactIdx = audioTime * waveform.peaksPerSecond;
+                const i0 = Math.floor(exactIdx);
+                const frac = exactIdx - i0;
 
                 let amp = 0;
-                if (peakIndex >= 0 && peakIndex < waveform.peaks.length) {
-                    amp = waveform.peaks[peakIndex];
+                if (i0 >= 0 && i0 < waveform.peaks.length) {
+                    const a0 = waveform.peaks[i0];
+                    const a1 = i0 + 1 < waveform.peaks.length ? waveform.peaks[i0 + 1] : a0;
+                    // Linear interpolation between frames prevents stepped aliasing
+                    amp = a0 + (a1 - a0) * frac;
                 }
 
-                const y = hitLineY - (t - currentTime) * this.pixelsPerSecond;
-                const halfW = amp * maxHalfWidth;
-
-                leftPath.push({ x: centerX - halfW, y });
-                rightPath.push({ x: centerX + halfW, y });
+                yCoords.push(y);
+                halfWidths.push(Math.min(amp * maxHalfWidth, maxHalfWidth));
             }
 
-            if (leftPath.length > 1) {
-                this.ctx.fillStyle = 'rgba(148, 163, 184, 0.14)';
-                this.ctx.strokeStyle = 'rgba(148, 163, 184, 0.3)';
-                this.ctx.lineWidth = 1;
-
+            if (yCoords.length > 1) {
                 this.ctx.beginPath();
-                this.ctx.moveTo(leftPath[0].x, leftPath[0].y);
-                for (let i = 1; i < leftPath.length; i++) this.ctx.lineTo(leftPath[i].x, leftPath[i].y);
-                for (let i = rightPath.length - 1; i >= 0; i--) this.ctx.lineTo(rightPath[i].x, rightPath[i].y);
+                // Right contour
+                for (let i = 0; i < yCoords.length; i++) {
+                    const x = centerX + halfWidths[i];
+                    const y = yCoords[i];
+                    if (i === 0) this.ctx.moveTo(x, y);
+                    else this.ctx.lineTo(x, y);
+                }
+                // Left contour
+                for (let i = yCoords.length - 1; i >= 0; i--) {
+                    const x = centerX - halfWidths[i];
+                    const y = yCoords[i];
+                    this.ctx.lineTo(x, y);
+                }
                 this.ctx.closePath();
+
+                // Soft, ambient fill without the noisy 1.2px border
+                this.ctx.fillStyle = 'rgba(56, 189, 248, 0.16)';
                 this.ctx.fill();
-                this.ctx.stroke();
             }
+
+            this.ctx.restore();
         }
 
-        // 3. Bar Lines
+        const visibleTimeWindow = hitLineY / this.pixelsPerSecond;
+
+        // 3. Conductor Bar Lines
         for (const bar of barLines) {
             const timeUntilHit = bar.time - currentTime;
             if (timeUntilHit < -0.1 || timeUntilHit > visibleTimeWindow) continue;
@@ -225,11 +246,11 @@ export class NoteRenderer {
                 this.ctx.lineWidth = 1;
                 this.ctx.shadowBlur = 0;
             } else if (isBlack) {
-                this.ctx.strokeStyle = '#64748b'; // Slate gray
+                this.ctx.strokeStyle = '#64748b';
                 this.ctx.lineWidth = 2;
                 this.ctx.shadowBlur = 0;
             } else {
-                this.ctx.strokeStyle = '#ffffff'; // White
+                this.ctx.strokeStyle = '#ffffff';
                 this.ctx.lineWidth = 1.8;
                 this.ctx.shadowBlur = 0;
             }
@@ -282,7 +303,7 @@ export class NoteRenderer {
             this.ctx.strokeRect(x, y, w, h);
         }
 
-        // 6. Badges with Hand Indicators (e.g., "D# R2" or "C L5")
+        // 6. High-Contrast Note Badges
         if (showNoteLabels) {
             this.ctx.save();
             this.ctx.font = 'bold 9px monospace';
@@ -326,7 +347,6 @@ export class NoteRenderer {
                 }
                 this.ctx.fill();
 
-                // Border: red if waiting, amber if Left Hand, cyan-slate if Right Hand
                 this.ctx.strokeStyle = isWaiting
                 ? '#ef4444'
                 : note.hand === 'LH'
@@ -360,5 +380,10 @@ export class NoteRenderer {
         this.ctx.moveTo(leftInactiveWidth, hitLineY);
         this.ctx.lineTo(rightInactiveX, hitLineY);
         this.ctx.stroke();
+
+        // 8. Guitar Hero Flame Particles & Keybed Score / Multiplier Popups
+        if (particles) {
+            particles.draw(this.ctx);
+        }
     }
 }

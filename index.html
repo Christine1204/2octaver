@@ -132,7 +132,7 @@
         <section class="sidebar-section tracks-section">
           <div class="section-title-row">
             <h3 class="section-title">Tracks</h3>
-            <button id="auto-fit-btn" class="header-action-btn" title="Auto-transpose all tracks into 2-octave range" disabled>Auto-Fit All</button>
+            <button id="auto-fit-btn" class="header-action-btn" title="Reset tracks into clean 2-octave split" disabled>Auto-Fit All</button>
           </div>
           <div id="track-list" class="track-list">
             <p class="empty-hint">Load a MIDI file to select tracks.</p>
@@ -158,16 +158,28 @@
           <div id="timeline-playhead"></div>
         </div>
 
-        <div id="accuracy-hud" class="accuracy-hud">
-          <div class="metric-block pitch-metric">
-            <span class="metric-label">PITCH</span>
-            <span id="pitch-acc-val" class="metric-val">--%</span>
+        <!-- Guitar Hero Arcade Score HUD -->
+        <div id="arcade-hud" class="arcade-hud">
+          <div class="score-stars-cluster">
+            <div class="stars-track" id="stars-track">
+              <span class="star-icon" data-star="1">★</span>
+              <span class="star-icon" data-star="2">★</span>
+              <span class="star-icon" data-star="3">★</span>
+              <span class="star-icon" data-star="4">★</span>
+              <span class="star-icon" data-star="5">★</span>
+            </div>
+            <div class="hud-score-number" id="hud-score">000000</div>
           </div>
-          <div class="hud-divider"></div>
-          <div class="metric-block rhythm-metric">
-            <span class="metric-label">RHYTHM</span>
-            <span id="rhythm-acc-val" class="metric-val">--%</span>
+
+          <div class="streak-multiplier-cluster">
+            <div class="multiplier-badge" id="multiplier-badge">1X</div>
+            <div class="streak-readout">
+              <span class="streak-val" id="streak-val">0</span>
+              <span class="streak-lbl">STREAK</span>
+            </div>
           </div>
+
+          <div class="rating-toast" id="rating-toast"></div>
         </div>
 
         <div class="canvas-stage">
@@ -176,6 +188,72 @@
 
         <div id="keyboard-view"></div>
       </main>
+    </div>
+
+    <!-- Track Completion Summary Modal -->
+    <div id="summary-modal" class="summary-modal hidden">
+      <div class="summary-card">
+        <div class="summary-header">
+          <span class="summary-pill">TRACK COMPLETE</span>
+          <h2 class="summary-title">Performance Summary</h2>
+          <div class="summary-stars" id="summary-stars">
+            <span class="big-star" data-star="1">★</span>
+            <span class="big-star" data-star="2">★</span>
+            <span class="big-star" data-star="3">★</span>
+            <span class="big-star" data-star="4">★</span>
+            <span class="big-star" data-star="5">★</span>
+          </div>
+        </div>
+
+        <div class="summary-score-hero">
+          <span class="summary-score-label">FINAL SCORE</span>
+          <span class="summary-score-number" id="summary-final-score">000000</span>
+        </div>
+
+        <div class="summary-grid">
+          <!-- Metrics Breakdown -->
+          <div class="summary-col">
+            <h4 class="col-title">ACCURACY & COMBO</h4>
+            <div class="summary-stat-row">
+              <span>Overall Accuracy</span>
+              <strong id="summary-accuracy" class="text-cyan">--%</strong>
+            </div>
+            <div class="summary-stat-row">
+              <span>Max Streak</span>
+              <strong id="summary-max-streak">0</strong>
+            </div>
+            <div class="summary-stat-row">
+              <span>Perfect Hits</span>
+              <strong id="summary-perfect" class="text-cyan">0</strong>
+            </div>
+            <div class="summary-stat-row">
+              <span>Great Hits</span>
+              <strong id="summary-great" class="text-green">0</strong>
+            </div>
+            <div class="summary-stat-row">
+              <span>Good Hits</span>
+              <strong id="summary-good" class="text-yellow">0</strong>
+            </div>
+            <div class="summary-stat-row">
+              <span>Missed Notes</span>
+              <strong id="summary-misses" class="text-red">0</strong>
+            </div>
+          </div>
+
+          <!-- Star Tier Cutoffs -->
+          <div class="summary-col">
+            <h4 class="col-title">STAR THRESHOLDS</h4>
+            <div id="summary-star-reqs" class="star-reqs-stack">
+              <!-- Dynamically populated rows -->
+            </div>
+          </div>
+        </div>
+
+        <div class="summary-actions">
+          <button type="button" id="summary-replay-btn" class="summary-btn primary-action">Replay Song (Space)</button>
+          <button type="button" id="summary-close-btn" class="summary-btn secondary-action">Back to Practice</button>
+        </div>
+      </div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>
