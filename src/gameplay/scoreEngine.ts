@@ -12,7 +12,8 @@ export interface ScoreState {
     maxStreak: number;
     multiplier: number;
     stars: number;
-    starFillPercent: number;
+    starProgressPercent: number; // 0% to 100% toward NEXT star
+    nextStarNumber: number;      // 1 to 5 (or 5 if maxed)
     rating: HitRating | null;
     perfectHits: number;
     greatHits: number;
@@ -34,7 +35,8 @@ export class ScoreEngine {
     private goodHits = 0;
     private misses = 0;
 
-    private starCutoffs = [0.20, 0.40, 0.60, 0.78, 0.92];
+    // Realistic arcade progression curve
+    private starCutoffs = [0.18, 0.38, 0.58, 0.76, 0.90];
 
     public recalculateTrackBenchmark(totalNotes: number): void {
         this.reset();
@@ -45,7 +47,18 @@ export class ScoreEngine {
             return;
         }
 
-        const realisticTarget = totalNotes * 85 * 3.2;
+        // Dynamic multiplier target based on chart note density:
+        // Solo / sparse lines (<350 notes) target ~2.1x average multiplier
+        // Medium charts (350-600 notes) target ~2.5x
+        // Dense polyphonic charts (>600 notes) target ~2.9x
+        let expectedMult = 2.1;
+        if (totalNotes >= 600) {
+            expectedMult = 2.9;
+        } else if (totalNotes >= 350) {
+            expectedMult = 2.5;
+        }
+
+        const realisticTarget = totalNotes * 88 * expectedMult;
         this.benchmarkScore = Math.max(100, Math.round(realisticTarget));
     }
 
@@ -85,20 +98,19 @@ export class ScoreEngine {
         this.score += points;
         this.lastRating = rating;
 
-        const multMilestoneCrossed = Math.floor(mult) > Math.floor(prevMult) || (mult === 5.0 && prevMult < 5.0);
+        const multMilestoneCrossed =
+        Math.floor(mult) > Math.floor(prevMult) || (mult === 5.0 && prevMult < 5.0);
 
         return { rating, points, mult, multMilestoneCrossed };
     }
 
     public registerMiss(): void {
-        // Soft cushion: lose 3 notes of combo (-0.3x) rather than wiping to zero
         this.streak = Math.max(0, this.streak - 3);
         this.misses++;
         this.lastRating = 'MISS';
     }
 
     public getMultiplier(): number {
-        // Ramps up by 0.1x on every single consecutive note, capped at 5.0x
         return Math.min(5.0, Math.round((1.0 + this.streak * 0.1) * 10) / 10);
     }
 
@@ -111,14 +123,30 @@ export class ScoreEngine {
     }
 
     public getState(): ScoreState {
+        const reqs = this.getStarRequirements();
         let starsEarned = 0;
-        for (let i = 0; i < this.starCutoffs.length; i++) {
-            if (this.score >= this.benchmarkScore * this.starCutoffs[i]) {
+
+        for (let i = 0; i < reqs.length; i++) {
+            if (this.score >= reqs[i].scoreRequired) {
                 starsEarned = i + 1;
             }
         }
 
-        const ratio = Math.min(1.0, this.score / (this.benchmarkScore * 0.92));
+        // Milestone Progress: Calculate 0-100% fill toward the NEXT star
+        let progressPercent = 0;
+        let nextStarNumber = Math.min(5, starsEarned + 1);
+
+        if (starsEarned === 5) {
+            progressPercent = 100;
+        } else {
+            const prevThreshold = starsEarned > 0 ? reqs[starsEarned - 1].scoreRequired : 0;
+            const nextThreshold = reqs[starsEarned].scoreRequired;
+            const span = nextThreshold - prevThreshold;
+            if (span > 0) {
+                const currentInSpan = Math.max(0, this.score - prevThreshold);
+                progressPercent = Math.min(100, Math.round((currentInSpan / span) * 100));
+            }
+        }
 
         return {
             score: this.score,
@@ -126,7 +154,8 @@ export class ScoreEngine {
             maxStreak: this.maxStreak,
             multiplier: this.getMultiplier(),
             stars: starsEarned,
-            starFillPercent: Math.round(ratio * 100),
+            starProgressPercent: progressPercent,
+            nextStarNumber,
             rating: this.lastRating,
             perfectHits: this.perfectHits,
             greatHits: this.greatHits,
