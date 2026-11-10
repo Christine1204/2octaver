@@ -788,6 +788,12 @@ function stopPlayback() {
 playBtn.addEventListener('click', () => (isPlaying ? pausePlayback() : startPlayback()));
 stopBtn.addEventListener('click', stopPlayback);
 
+summaryReplayBtn.addEventListener('click', () => {
+  hardResetGameState(true);
+  startPlayback();
+});
+summaryCloseBtn.addEventListener('click', closeSummaryModal);
+
 // -------------------------------------------------------------
 // 5. Canvas Drag & Scroll Scrubbing
 // -------------------------------------------------------------
@@ -861,15 +867,6 @@ function toggleLoop(): void {
 
 loopBtn.addEventListener('click', toggleLoop);
 minimap.onToggleLoop(() => toggleLoop());
-
-minimap.onLoopChange((newA, newB) => {
-  const songDur = currentSong?.duration || 100;
-  if (newA >= 0) loopState.start = Math.max(0, Math.min(newA, loopState.end - 0.2));
-  if (newB >= 0) loopState.end = Math.min(songDur, Math.max(newB, loopState.start + 0.2));
-
-  minimap.updateLoopMarkers(loopState);
-  minimap.draw(combinedNotes, currentBarLines, loopState, currentWaveform, currentOffsetSeconds);
-});
 
 minimap.onSeek((targetTime) => {
   currentTransportTime = targetTime;

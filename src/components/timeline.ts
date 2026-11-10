@@ -16,7 +16,6 @@ export class TimelineMinimap {
     private markerB: HTMLElement | null = null;
 
     private duration = 1;
-    private barLines: BarLine[] = [];
 
     // State cache for automatic, lossless repaints on resize
     private cachedNotes: NoteWithMeta[] = [];
@@ -26,7 +25,6 @@ export class TimelineMinimap {
     private cachedOffsetSeconds = 0;
 
     private onSeekCb: ((time: number) => void) | null = null;
-    private onLoopChangeCb: ((start: number, end: number) => void) | null = null;
     private onToggleLoopCb: (() => void) | null = null;
 
     private isDragging = false;
@@ -62,7 +60,7 @@ export class TimelineMinimap {
     }
 
     public setBarLines(bars: BarLine[]): void {
-        this.barLines = bars;
+        this.cachedBarLines = bars;
     }
 
     public resize(): void {
@@ -212,9 +210,6 @@ export class TimelineMinimap {
 
     public onSeek(cb: (t: number) => void): void {
         this.onSeekCb = cb;
-    }
-    public onLoopChange(cb: (s: number, e: number) => void): void {
-        this.onLoopChangeCb = cb;
     }
     public onToggleLoop(cb: () => void): void {
         this.onToggleLoopCb = cb;

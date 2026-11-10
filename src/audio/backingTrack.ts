@@ -19,7 +19,6 @@ export class BackingTrackPlayer {
 
     private isPlaying = false;
     private startTime = 0;
-    private pausedAt = 0;
     private playbackRate = 1.0;
     private syncOffsetMs = 0;
     private volume = 0.8;
@@ -153,20 +152,17 @@ export class BackingTrackPlayer {
 
     public pause(): void {
         if (!this.isPlaying) return;
-        this.pausedAt = this.getCurrentTime() ?? 0;
         this.stopSource();
         this.isPlaying = false;
     }
 
     public stop(): void {
         this.stopSource();
-        this.pausedAt = 0;
         this.isPlaying = false;
         this.updatePerformanceFilter(1.0);
     }
 
     public seek(toSeconds: number): void {
-        this.pausedAt = toSeconds;
         if (this.isPlaying) {
             this.play(toSeconds);
         }

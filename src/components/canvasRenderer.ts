@@ -75,6 +75,10 @@ export class NoteRenderer {
         return this.canvas.getBoundingClientRect().height - this.hitLineBuffer;
     }
 
+    public getPixelsPerSecond(): number {
+        return this.pixelsPerSecond;
+    }
+
     public draw(
         currentTime: number,
         notes: NoteWithMeta[],

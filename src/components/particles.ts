@@ -1,3 +1,5 @@
+import type { HitRating } from '../gameplay/scoreEngine';
+
 export interface SparkParticle {
     x: number;
     y: number;

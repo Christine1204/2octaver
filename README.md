@@ -24,9 +24,11 @@
 
 ## Usage
 
-I will eventually get to adding a github.io link but currently,the only way to run it is with npm:
+**Live site:** https://christine1204.github.io/2octaver/
 
-Install node.js.
+Open it in Google Chrome, Brave, or Edge(ew) — or any browser that supports the Web MIDI API (Firefox currently does not). Web MIDI also needs a secure context, which GitHub Pages provides over HTTPS.
+
+To run it locally, install node.js.
 
 Clone the repository:
 ```
@@ -43,8 +45,20 @@ Start the local Vite server:
 npm run dev
 ```
 
-Launch in browser: Open the printed local URL (usually http://localhost:5173/) in Google Chrome, Brave, or Edge(ew) or basically any browsers that support the Web MIDI API.
+Open the printed local URL (usually http://localhost:5173/).
 
+For a production build:
+```
+npm run build    # type-check + bundle into dist/
+npm run preview  # serve the built bundle locally
+```
+
+
+## Deployment
+
+Pushes to `master` are built and deployed to GitHub Pages by [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). One-time setup: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
+
+`vite.config.ts` uses a relative `base`, so the same `dist/` works at `/2octaver/`, on a custom domain, or from any static file server.
 
 
 ## Whats lacking right now
