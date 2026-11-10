@@ -647,6 +647,13 @@ z-index: 6;
   cursor: ew-resize;
   z-index: 10;
   transition: opacity 0.15s ease;
+  touch-action: none;
+  user-select: none;
+}
+
+.loop-slider-marker.dragging {
+  z-index: 20;
+  opacity: 1;
 }
 
 .loop-slider-marker .loop-handle-tag {

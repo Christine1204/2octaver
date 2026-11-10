@@ -66,7 +66,6 @@ Pushes to `master` are built and deployed to GitHub Pages by [`.github/workflows
   Theres no internal sound,youll have to open a DAW or VST and play your own sounds,i reccomend any keys preset and a free synth like SurgeXT,but it depends on your goals
   Theres no way to turn the audio quality thing off yet, i should probably implement that
   Theres no way to select a specific midi controller if u have multiple,it just reads all of them
-  The loop markers say you can drag them,but right now its just double click to set A and B,sorry
   There UI needs a big redesign to not look so vibe coded
   Scaling is a bit hard when its not fullscreen and fingering help is on
   Fingering help is not fully accurate to how convention goes
@@ -79,7 +78,7 @@ Pushes to `master` are built and deployed to GitHub Pages by [`.github/workflows
 
   I dont plan on working much on this at all since i have a bigger project that takes 95% of my attention,but you can freely contribute,with ai or not, as long as the change is sensible, even if i vibe coded this i try to keep the big structure intact and not let chaos ensue.
 
-  If i do come back to it the order id go in is: actual draggable loop markers,an off switch for the audio quality thing,picking your midi controller,and then drum mode,because drum mode is the fun one.
+  If i do come back to it the order id go in is: an off switch for the audio quality thing,picking your midi controller,and then drum mode,because drum mode is the fun one.
 
 Cheers,Chr
   

@@ -868,6 +868,14 @@ function toggleLoop(): void {
 loopBtn.addEventListener('click', toggleLoop);
 minimap.onToggleLoop(() => toggleLoop());
 
+// Dragging A/B on the minimap mutates the loop region live; playback keeps
+// looping the new window without needing a stop/start.
+minimap.onLoopChange((loop) => {
+  loopState.start = loop.start;
+  loopState.end = loop.end;
+  minimap.draw(combinedNotes, currentBarLines, loopState, currentWaveform, currentOffsetSeconds);
+});
+
 minimap.onSeek((targetTime) => {
   currentTransportTime = targetTime;
   backingTrack.seek(targetTime);

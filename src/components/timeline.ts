@@ -26,8 +26,10 @@ export class TimelineMinimap {
 
     private onSeekCb: ((time: number) => void) | null = null;
     private onToggleLoopCb: (() => void) | null = null;
+    private onLoopChangeCb: ((loop: LoopRegion) => void) | null = null;
 
     private isDragging = false;
+    private draggingMarker: 'A' | 'B' | null = null;
 
     constructor(canvasId: string, playheadId: string) {
         const el = document.getElementById(canvasId) as HTMLCanvasElement;
@@ -214,6 +216,84 @@ export class TimelineMinimap {
     public onToggleLoop(cb: () => void): void {
         this.onToggleLoopCb = cb;
     }
+    public onLoopChange(cb: (loop: LoopRegion) => void): void {
+        this.onLoopChangeCb = cb;
+    }
+
+    // Maps a client X coordinate to a transport time, snapping to nearby bar lines
+    // so loop boundaries land on the grid instead of somewhere between two beats.
+    private timeFromClientX(clientX: number): { time: number; snapped: boolean } {
+        const rect = this.canvas.getBoundingClientRect();
+        if (rect.width <= 0) return { time: 0, snapped: false };
+
+        const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
+        const time = (x / rect.width) * this.duration;
+
+        if (this.cachedBarLines.length > 0) {
+            const snapTolerance = (7 / rect.width) * this.duration;
+            let bestTime = time;
+            let bestDist = snapTolerance;
+            let snapped = false;
+
+            for (const bar of this.cachedBarLines) {
+                const dist = Math.abs(bar.time - time);
+                if (dist <= bestDist) {
+                    bestDist = dist;
+                    bestTime = bar.time;
+                    snapped = true;
+                }
+            }
+
+            if (snapped) return { time: bestTime, snapped: true };
+        }
+
+        return { time, snapped: false };
+    }
+
+    private moveMarker(which: 'A' | 'B', clientX: number): void {
+        const { time, snapped } = this.timeFromClientX(clientX);
+        const loop = this.cachedLoop;
+        // Keep A strictly before B, even at extreme zoom-outs.
+        const minGap = Math.min(0.2, this.duration * 0.01);
+
+        if (which === 'A') {
+            loop.start = Math.max(0, Math.min(time, loop.end - minGap));
+        } else {
+            loop.end = Math.min(this.duration, Math.max(time, loop.start + minGap));
+        }
+
+        const el = which === 'A' ? this.markerA : this.markerB;
+        el?.classList.toggle('snapped', snapped);
+
+        this.updateLoopMarkers(loop);
+        this.onLoopChangeCb?.(loop);
+    }
+
+    private beginMarkerDrag(which: 'A' | 'B', e: PointerEvent): void {
+        if (!this.cachedLoop.enabled) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        this.draggingMarker = which;
+        const el = which === 'A' ? this.markerA : this.markerB;
+        el?.classList.add('dragging');
+        try {
+            el?.setPointerCapture(e.pointerId);
+        } catch {
+            // Synthetic/unsupported pointer ids are fine; window listeners still track the drag.
+        }
+
+        this.moveMarker(which, e.clientX);
+    }
+
+    private endMarkerDrag(): void {
+        if (!this.draggingMarker) return;
+
+        const el = this.draggingMarker === 'A' ? this.markerA : this.markerB;
+        el?.classList.remove('dragging', 'snapped');
+        this.draggingMarker = null;
+    }
 
     private initEvents(): void {
         const handleSeek = (e: MouseEvent) => {
@@ -232,18 +312,33 @@ export class TimelineMinimap {
             if (this.isDragging) handleSeek(e);
         });
 
-            window.addEventListener('mouseup', () => {
-                this.isDragging = false;
-            });
+        window.addEventListener('mouseup', () => {
+            this.isDragging = false;
+        });
 
-            this.markerA?.addEventListener('dblclick', (e) => {
-                e.stopPropagation();
-                this.onToggleLoopCb?.();
-            });
+        // Loop marker dragging. Pointer capture is attempted but the window-level
+        // listeners are what actually keep the drag alive, so this also works for
+        // touch/pen input and synthetic events.
+        this.markerA?.addEventListener('pointerdown', (e) => this.beginMarkerDrag('A', e));
+        this.markerB?.addEventListener('pointerdown', (e) => this.beginMarkerDrag('B', e));
 
-            this.markerB?.addEventListener('dblclick', (e) => {
-                e.stopPropagation();
-                this.onToggleLoopCb?.();
-            });
+        window.addEventListener('pointermove', (e) => {
+            if (!this.draggingMarker) return;
+            e.preventDefault();
+            this.moveMarker(this.draggingMarker, e.clientX);
+        });
+
+        window.addEventListener('pointerup', () => this.endMarkerDrag());
+        window.addEventListener('pointercancel', () => this.endMarkerDrag());
+
+        this.markerA?.addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            this.onToggleLoopCb?.();
+        });
+
+        this.markerB?.addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            this.onToggleLoopCb?.();
+        });
     }
 }
